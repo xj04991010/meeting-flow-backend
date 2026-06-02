@@ -8,8 +8,7 @@ export async function createSourceBatch(userId: string, rawText: string): Promis
       user_id: userId,
       source_type: 'telegram',
       raw_text: rawText,
-      parser_version: PARSER_VERSION,
-      status: 'pending' // new status field to track AI extraction state
+      parser_version: PARSER_VERSION
     })
     .select('id')
     .single();
@@ -22,7 +21,7 @@ export async function createSourceBatch(userId: string, rawText: string): Promis
 }
 
 export async function updateSourceBatchSummary(batchId: string, aiSummary: string, output?: any) {
-  const updatePayload: any = { summary: aiSummary, status: 'completed' };
+  const updatePayload: any = { summary: aiSummary };
 
   if (output && output.type === 'SUCCESS') {
     const taskCount = output.tasks?.length || 0;
