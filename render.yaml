@@ -2,6 +2,7 @@ services:
   - type: web
     name: meeting-flow-backend
     env: node
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
     envVars:
@@ -9,15 +10,17 @@ services:
         value: production
       - key: SUPABASE_URL
         sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
         sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
       - key: GOOGLE_REDIRECT_URI
-        sync: false
-      - key: GROQ_API_KEY
         sync: false
