@@ -492,6 +492,51 @@ Rules:
 - Never use a single mutually-exclusive type field.`;
 }
 
+interface IntentOutput {
+  intent: 'extract_meeting' | 'delete_item' | 'query_schedule' | 'chit_chat';
+  delete_keyword?: string | null;
+  query_timeframe?: string | null;
+  reply_message?: string | null;
+}
+
+async function routeIntent(userId: string, text: string): Promise<IntentOutput> {
+  if (text.length > 300) return { intent: 'extract_meeting' };
+  
+  const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+  const prompt = `You are an intent router for a Telegram assistant managing tasks and calendars.
+Current Date: ${todayStr}
+Analyze the user's message and determine the intent.
+Output JSON only:
+{
+  "intent": "extract_meeting" | "delete_item" | "query_schedule" | "chit_chat",
+  "delete_keyword": "string or null (e.g., '準備尼龍神最新報表')",
+  "query_timeframe": "string or null (e.g., '明天', '下週')",
+  "reply_message": "string or null (natural conversational reply if chit_chat)"
+}
+
+Rules:
+- "extract_meeting": User wants to create, add, or record tasks/events, or provides meeting notes (e.g. "新增任務", "幫我排開會").
+- "delete_item": User wants to delete, cancel, or remove an existing item (e.g. "刪除 報表", "取消會議"). Set "delete_keyword".
+- "query_schedule": User asks what their schedule/tasks are (e.g. "我明天有什麼事", "總結一下待辦"). Set "query_timeframe".
+- "chit_chat": General questions or greetings (e.g. "你有什麼功能", "你好"). Set "reply_message".`;
+
+  try {
+    const content = await callLLM(userId, [
+      { role: 'system', content: prompt },
+      { role: 'user', content: text }
+    ], { type: 'json_object' });
+    const parsed = JSON.parse(content || '{}');
+    return {
+      intent: parsed.intent || 'extract_meeting',
+      delete_keyword: parsed.delete_keyword,
+      query_timeframe: parsed.query_timeframe,
+      reply_message: parsed.reply_message
+    };
+  } catch (e) {
+    return { intent: 'extract_meeting' };
+  }
+}
+
 async function extractMeetingData(userId: string, text: string): Promise<ParserOutput> {
   const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
   const content = await callLLM(userId, [
@@ -806,8 +851,38 @@ async function processTelegramUpdate(message: any) {
   const stopProgressUpdates = startProgressUpdates(chatId as number, thinkingMessageId as number, isShort);
 
   try {
-    // 簡化路由：所有輸入統一走 full_extraction
-    // Supplement Mode 已移除，避免過度工程化
+    const route = await routeIntent(userId, text);
+    console.log(`[Router] intent=${route.intent} keyword=${route.delete_keyword} timeframe=${route.query_timeframe}`);
+
+    if (route.intent === 'delete_item' && route.delete_keyword) {
+      // Find matching tasks
+      const { data: tasks } = await supabase.from('tasks').select('id, title').eq('user_id', userId).ilike('title', `%${route.delete_keyword}%`).limit(1);
+      if (tasks && tasks.length > 0) {
+        await supabase.from('tasks').delete().eq('id', tasks[0].id);
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, `✅ 已為您刪除任務：「${tasks[0].title}」`);
+      } else {
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, `找不到包含「${route.delete_keyword}」的相關任務，請確認名稱是否正確。`);
+      }
+      return;
+    }
+
+    if (route.intent === 'query_schedule') {
+      const { data: tasks } = await supabase.from('tasks').select('title, status').eq('user_id', userId).neq('status', 'completed').limit(10);
+      if (!tasks || tasks.length === 0) {
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, '您近期沒有任何待辦事項或行程。');
+      } else {
+        const list = tasks.map(t => `- ${t.title}`).join('\n');
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, `📅 **為您整理的待辦與行程：**\n\n${list}`);
+      }
+      return;
+    }
+
+    if (route.intent === 'chit_chat' && route.reply_message) {
+      await editTelegramMessage(chatId as number, thinkingMessageId as number, route.reply_message);
+      return;
+    }
+
+    // Default: extract_meeting
     console.log(`Starting full extraction for user=${userId} chars=${text.length}`);
     const result = await extractMeetingData(userId, text);
     const batchSummary = await persistExtraction(userId, text, result);
@@ -817,8 +892,6 @@ async function processTelegramUpdate(message: any) {
       ? buildTelegramSummary(result, batchSummary) 
       : `${buildTelegramSummary(result, batchSummary)}\n\n⏱️ 耗時：約 ${seconds} 秒`;
 
-    console.log(`Finished extraction for user=${userId} seconds=${seconds} tasks=${batchSummary.taskCount} events=${batchSummary.eventCount}`);
-    
     let buttons: TelegramButton[][] | undefined = undefined;
     const taskIds = batchSummary.taskIds as string[];
     if (isShort && batchSummary.taskCount === 1 && taskIds && taskIds.length === 1) {
