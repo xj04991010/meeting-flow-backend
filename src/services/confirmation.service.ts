@@ -12,8 +12,20 @@ export async function processConfirmationJob(userId: string, chatId: number, cal
     }
 
     if (action === 'ignore') {
+      const { data: ignoredCandidates } = await supabase.from('ai_candidates').select('*').eq('source_batch_id', batchId);
+      
       await supabase.from('ai_candidates').update({ status: 'ignored' }).eq('source_batch_id', batchId);
       await updateSourceBatchSummary(batchId, 'Ignored by user.');
+      
+      if (ignoredCandidates) {
+        const evalLogs = ignoredCandidates.map(c => ({
+          user_id: userId,
+          source_batch_id: batchId,
+          original_candidate: c.payload,
+          final_action: 'ignored'
+        }));
+        await supabase.from('ai_evaluations').insert(evalLogs);
+      }
       
       await editTelegramMessage(chatId, messageId, '🗑️ 此批次的解析結果已全數捨棄。');
       await answerCallbackQuery(callbackId, '已捨棄。');
@@ -74,6 +86,16 @@ export async function processConfirmationJob(userId: string, chatId: number, cal
         // Mark candidate as confirmed
         await supabase.from('ai_candidates').update({ status: 'confirmed' }).eq('id', candidate.id);
       }
+      
+      // Save to eval dataset
+      const evalLogs = candidates.map(c => ({
+        user_id: userId,
+        source_batch_id: batchId,
+        original_candidate: c.payload,
+        final_action: 'confirmed_as_is',
+        final_payload: c.payload
+      }));
+      await supabase.from('ai_evaluations').insert(evalLogs);
 
       await updateSourceBatchSummary(batchId, 'Confirmed all items by user.');
       

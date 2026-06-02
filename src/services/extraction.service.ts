@@ -27,15 +27,18 @@ Analyze the user input.
 - If it's a weather inquiry, output "STRATEGY_RESPONSE" and provide data-driven schedule advice based on memory.
 - If it contains actionable items, output "TASK_EXTRACTION" or "EVENT_EXTRACTION".
 - If the user mentions personal habits, constraints, or identity rules, output "MEMORY_EXTRACTION".
+- DECISION ENGINE (Tasks): Calculate "risk_score" (0-100) based on urgency and unfulfilled promise risk.
+- DECISION ENGINE (Events): If a meeting lacks clear preparation materials, add "prep_gap_notes" to point out the missing items based on memories.
+- MEMORY GRAPH: For every memory, explicitly cite the "evidence_text" from the user's input, and classify "entity_type" as "person", "project", "preference", or "rule".
 
 Output strictly valid JSON matching this schema:
 {
   "type": "TASK_EXTRACTION" | "EVENT_EXTRACTION" | "MEMORY_EXTRACTION" | "STRATEGY_RESPONSE" | "REJECT_LOW_VALUE",
   "confidence": number (0.0 to 1.0),
   "reasoning_summary": "zero-BS logical summary of what was found or rejected. Use Traditional Chinese.",
-  "tasks": [ { "title": "...", "due_at": "ISO-8601 or null", "priority": "low|medium|high|urgent", "category": "${catsSchema}" } ],
-  "events": [ { "title": "...", "start_at": "ISO-8601", "end_at": "ISO-8601 or null" } ],
-  "memories": [ { "content": "...", "memory_type": "preference|habit|constraint|identity", "importance": 1 to 5 } ]
+  "tasks": [ { "title": "...", "due_at": "ISO-8601 or null", "priority": "low|medium|high|urgent", "category": "${catsSchema}", "risk_score": 0, "prep_gap_notes": "null or string" } ],
+  "events": [ { "title": "...", "start_at": "ISO-8601", "end_at": "ISO-8601 or null", "prep_gap_notes": "null or string" } ],
+  "memories": [ { "content": "...", "memory_type": "preference|habit|constraint|identity", "entity_type": "person|project|preference|rule", "importance": 1 to 5, "evidence_text": "..." } ]
 }`;
 
     // 3. Call LLM
