@@ -96,11 +96,11 @@ type TelegramButton = {
 };
 
 const ExtractedTaskSchema = z.object({
-  title: z.string(),
+  title: z.string().nullable().optional(),
   client: z.string().nullable().optional(),
   owner: z.string().nullable().optional(),
   deadline: z.string().nullable().optional(),
-  priority: z.enum(['high', 'normal', 'low']).optional(),
+  priority: z.enum(['high', 'normal', 'low']).nullable().optional(),
   confidence: z.number().nullable().optional(),
   needs_review: z.boolean().nullable().optional(),
   source_quote: z.string().nullable().optional()
@@ -108,7 +108,7 @@ const ExtractedTaskSchema = z.object({
 type ExtractedTask = z.infer<typeof ExtractedTaskSchema>;
 
 const ExtractedEventSchema = z.object({
-  title: z.string(),
+  title: z.string().nullable().optional(),
   client: z.string().nullable().optional(),
   start_time: z.string().nullable().optional(),
   end_time: z.string().nullable().optional(),
@@ -120,10 +120,10 @@ const ExtractedEventSchema = z.object({
 type ExtractedEvent = z.infer<typeof ExtractedEventSchema>;
 
 const ParserOutputSchema = z.object({
-  reply_message: z.string().optional(),
-  tasks: z.array(ExtractedTaskSchema).optional(),
-  events: z.array(ExtractedEventSchema).optional(),
-  unresolved_notes: z.array(z.string()).optional()
+  reply_message: z.string().nullable().optional(),
+  tasks: z.array(ExtractedTaskSchema).nullable().optional(),
+  events: z.array(ExtractedEventSchema).nullable().optional(),
+  unresolved_notes: z.array(z.string().nullable()).nullable().optional()
 });
 type ParserOutput = z.infer<typeof ParserOutputSchema>;
 
@@ -674,7 +674,7 @@ async function insertTasks(userId: string, batchId: string | null, tasks: Extrac
       const confidence = normalizeConfidence(task.confidence);
       return {
         user_id: userId,
-        title: task.title.trim(),
+        title: (task.title || '').trim(),
         category: task.client || 'meeting',
         status: makeReviewFlag(confidence, task.needs_review) ? 'needs_review' : 'pending',
         deadline: task.deadline || null,
@@ -715,7 +715,7 @@ async function insertEvents(userId: string, batchId: string | null, events: Extr
       const needsReview = makeReviewFlag(confidence, event.needs_review, hasMeaningfulText(event.start_time));
       return {
         user_id: userId,
-        title: event.title.trim(),
+        title: (event.title || '').trim(),
         start_time: event.start_time,
         end_time: event.end_time || null,
         action_type: 'propose_create',
