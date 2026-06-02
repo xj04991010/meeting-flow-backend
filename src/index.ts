@@ -549,6 +549,7 @@ Rules:
 - "delete_item": User wants to delete, cancel, or remove an existing item.
 - "query_schedule": User asks what their schedule/tasks are (e.g. "我今天有什麼事", "這週操盤有什麼"). Set query_timeframe and query_category.
 - "update_tasks": User wants to bulk update tasks (e.g. "把今天下午的行政都移到明天", "把今天的任務標記完成"). Set update_action, update_target_timeframe, update_new_deadline_iso.
+- "query_weather": User asks for weather information (e.g. "未來的天氣", "台中天氣如何"). Set "query_location" (string, default to "Taichung" if not explicitly mentioned).
 - "chit_chat": General questions or greetings. Set "reply_message". You are a minimalist, precise, zero-bullshit, data-driven expert assistant serving an INTJ/ENTJ. Reply with aggressive straightforwardness, absolute honesty, and zero polite fluff. Do NOT use emojis unless strictly for data categorization.`;
 
   try {
@@ -588,6 +589,7 @@ async function extractMeetingData(userId: string, text: string): Promise<ParserO
         reply_message: result.data.reply_message || '',
         tasks: result.data.tasks || [],
         events: result.data.events || [],
+        memories: result.data.memories || [],
         unresolved_notes: result.data.unresolved_notes || []
       };
     } else {
@@ -667,6 +669,7 @@ async function extractSupplementData(userId: string, text: string, batchContext:
         reply_message: result.data.reply_message || '',
         tasks: result.data.tasks || [],
         events: result.data.events || [],
+        memories: result.data.memories || [],
         unresolved_notes: result.data.unresolved_notes || []
       };
     } else {
@@ -1131,6 +1134,46 @@ async function processTelegramUpdate(message: any) {
       return;
     }
 
+    if (route.intent === 'query_weather') {
+      const location = (route as any).query_location || 'Taichung';
+      let weatherData = '';
+      try {
+        const res = await fetch(`https://wttr.in/${encodeURIComponent(location)}?format=j1`);
+        if (res.ok) {
+          const json: any = await res.json();
+          const current = json.current_condition?.[0] || {};
+          const weatherDesc = current.weatherDesc?.[0]?.value || '';
+          weatherData = `目前的溫度: ${current.temp_C}°C, 體感溫度: ${current.FeelsLikeC}°C, 天氣: ${weatherDesc}, 濕度: ${current.humidity}%.`;
+          const tomorrow = json.weather?.[1];
+          if (tomorrow) {
+            weatherData += `\n明天的預報：最高溫 ${tomorrow.maxtempC}°C, 最低溫 ${tomorrow.mintempC}°C, 降雨機率: ${tomorrow.hourly?.[0]?.chanceofrain || 0}%.`;
+          }
+        } else {
+          weatherData = '無法取得氣象數據。';
+        }
+      } catch (err) {
+        weatherData = '氣象 API 連線失敗。';
+      }
+
+      // Fetch user memories to personalize the weather report
+      const { data: userMemories } = await supabase.from('memories').select('content').eq('user_id', userId);
+      const memoryStr = userMemories ? userMemories.map(m => m.content).join('; ') : '';
+
+      const weatherPrompt = `You are an INTJ zero-BS executive assistant.
+The user asked about the weather for: ${location}.
+Raw Weather Data: ${weatherData}
+User's Long-Term Memories & Habits: ${memoryStr}
+
+Instructions:
+1. Provide a brutally direct, logical weather report.
+2. Cross-reference the weather data with the user's memories (e.g. if it will rain, suggest moving A-Fu's dog training indoors, or advise on their gym/diet routine).
+3. Do NOT use polite fluff. Output ONLY the data-driven report and actionable suggestions.`;
+
+      const aiReply = await callLLM(userId, [{ role: 'system', content: weatherPrompt }], { type: 'text' });
+      await editTelegramMessage(chatId as number, thinkingMessageId as number, aiReply || '氣象分析失敗。');
+      return;
+    }
+
     if (route.intent === 'update_tasks') {
       const { data: tasks } = await supabase.from('tasks')
         .select('id, title, deadline, category')
@@ -1217,11 +1260,14 @@ Output JSON only:
         [{ text: '半小時', callback_data: `remind_${tid}_30m` }, { text: '明天 (1天)', callback_data: `remind_${tid}_1d` }],
         [{ text: '下週 (7天)', callback_data: `remind_${tid}_1w` }, { text: '下個月', callback_data: `remind_${tid}_1m` }]
       ];
-    } else if (batchSummary.taskCount > 0 || batchSummary.eventCount > 0) {
+    } else if (batchSummary.taskCount > 0 || batchSummary.eventCount > 0 || (batchSummary.memoryCount && batchSummary.memoryCount > 0)) {
       buttons = [
-        [{ text: '✅ 全部確認並同步', callback_data: `sync_batch_${batchSummary.batchId}` }],
-        [{ text: '打開 Dashboard 修改細節', url: getDashboardUrl(userId) }]
+        [{ text: '✅ 全部確認並同步', callback_data: `sync_batch_${batchSummary.batchId}` }]
       ];
+      if (batchSummary.memoryCount && batchSummary.memoryCount > 0) {
+        buttons.push([{ text: '🧠 查看已存入的長期記憶', callback_data: 'view_memory' }]);
+      }
+      buttons.push([{ text: '打開 Dashboard 修改細節', url: getDashboardUrl(userId) }]);
     }
 
     await editTelegramMessage(chatId as number, thinkingMessageId as number, reply, buttons);
