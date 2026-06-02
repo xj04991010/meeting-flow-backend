@@ -827,8 +827,11 @@ async function processTelegramUpdate(message: any) {
         [{ text: '半小時', callback_data: `remind_${tid}_30m` }, { text: '明天 (1天)', callback_data: `remind_${tid}_1d` }],
         [{ text: '下週 (7天)', callback_data: `remind_${tid}_1w` }, { text: '下個月', callback_data: `remind_${tid}_1m` }]
       ];
-    } else {
-      buttons = [[{ text: '打開 Dashboard', url: DASHBOARD_URL }]];
+    } else if (batchSummary.taskCount > 0 || batchSummary.eventCount > 0) {
+      buttons = [
+        [{ text: '✅ 全部確認並同步', callback_data: `sync_batch_${batchSummary.batchId}` }],
+        [{ text: '打開 Dashboard 修改細節', url: DASHBOARD_URL }]
+      ];
     }
 
     await editTelegramMessage(chatId as number, thinkingMessageId as number, reply, buttons);
@@ -976,6 +979,39 @@ async function handleCallbackQuery(callback: any) {
     } else {
       await answerCallbackQuery(callback.id, '設定失敗，請稍後再試。');
     }
+    return;
+  }
+
+  if (data && data.startsWith('sync_batch_')) {
+    const batchId = data.replace('sync_batch_', '');
+    
+    // 1. Set all tasks to pending (removing needs_review flag)
+    await supabase.from('tasks').update({ needs_review: false, status: 'pending' }).eq('source_batch_id', batchId).eq('needs_review', true);
+    
+    // 2. Set all events to ready
+    await supabase.from('calendar_intents').update({ needs_review: false, sync_status: 'ready', status: 'ready' }).eq('source_batch_id', batchId).eq('needs_review', true);
+    
+    // 3. Trigger sync-batch API internally
+    const { data: user } = await supabase.from('users').select('id').eq('telegram_chat_id', chatId).maybeSingle();
+    if (user) {
+       try {
+         await fetch(`http://127.0.0.1:${PORT}/api/calendar-intents/sync-batch`, {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ user_id: user.id })
+         });
+       } catch (err) {
+         console.error('Internal sync failed', err);
+       }
+    }
+
+    // 4. Update message to remove the button and reflect sync status
+    await answerCallbackQuery(callback.id, '✅ 已全部確認並嘗試同步！');
+    const newText = originalText
+      .replace('⚠️ **狀態：等待人工二次確認**', '✅ **狀態：已全部授權同步**')
+      .replace('所有擷取的項目目前皆設為「待審閱」，請點擊下方按鈕前往 Dashboard 進行確認，確認後才會同步至您的 Google 日曆。', '所有行程已排入同步佇列！');
+      
+    await editTelegramMessage(chatId, messageId, newText, [[{ text: '打開 Dashboard 修改細節', url: DASHBOARD_URL }]]);
     return;
   }
 
