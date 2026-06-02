@@ -1,0 +1,223 @@
+import { Hono } from 'hono';
+import { google } from 'googleapis';
+import { createClient } from '@supabase/supabase-js';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
+
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/auth/google/callback';
+
+const oauth2Client = new google.auth.OAuth2(
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  GOOGLE_REDIRECT_URI
+);
+
+const SCOPES = [
+  'https://www.googleapis.com/auth/calendar',
+  'https://www.googleapis.com/auth/calendar.events'
+];
+
+export const googleAuthRouter = new Hono();
+
+// GET /auth/google?user_id=xxx
+googleAuthRouter.get('/google', (c) => {
+  const userId = c.req.query('user_id');
+  if (!userId) return c.json({ error: 'user_id is required' }, 400);
+
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent', // Force to get refresh token
+    scope: SCOPES,
+    state: userId // pass user_id so we know who to save the token for
+  });
+  
+  return c.redirect(url);
+});
+
+// GET /auth/google/callback
+googleAuthRouter.get('/google/callback', async (c) => {
+  const code = c.req.query('code');
+  const userId = c.req.query('state');
+  
+  if (!code || !userId) {
+    return c.json({ error: 'Missing code or user_id (state)' }, 400);
+  }
+
+  try {
+    const { tokens } = await oauth2Client.getToken(code);
+    
+    // Save to supabase
+    const { error } = await supabase.from('google_tokens').upsert({
+      user_id: userId,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expiry_date: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
+      scope: tokens.scope,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' }); // Note: you might need to make user_id UNIQUE in the DB for upsert to work properly, or just insert/delete.
+    
+    if (error) {
+      console.error('Save token error:', error);
+      return c.json({ error: 'Failed to save token' }, 500);
+    }
+    
+    return c.html(`
+      <h2>Google Calendar 授權成功！</h2>
+      <p>您的帳號已成功綁定。您可以關閉此視窗並回到 Dashboard。</p>
+      <script>setTimeout(() => window.close(), 3000);</script>
+    `);
+  } catch (err: any) {
+    console.error('OAuth callback error:', err);
+    return c.json({ error: 'Authentication failed', details: err.message }, 500);
+  }
+});
+
+// ---------------------------------------------
+// Calendar Sync APIs
+// ---------------------------------------------
+export const googleCalendarRouter = new Hono<{ Variables: { userId: string } }>();
+
+// GET /api/auth/google/status
+googleCalendarRouter.get('/auth/google/status', async (c) => {
+  const userId = c.get('userId');
+  if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+  const { data } = await supabase.from('google_tokens').select('id').eq('user_id', userId).maybeSingle();
+  return c.json({ hasAuth: !!data });
+});
+
+async function getGoogleAuthClient(userId: string) {
+  const { data, error } = await supabase
+    .from('google_tokens')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+    
+  if (error || !data) return null;
+  
+  const client = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI);
+  client.setCredentials({
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    expiry_date: data.expiry_date ? new Date(data.expiry_date).getTime() : null
+  });
+  
+  return client;
+}
+
+// POST /api/calendar-intents/:id/sync
+googleCalendarRouter.post('/calendar-intents/:id/sync', async (c) => {
+  const intentId = c.req.param('id');
+  
+  // Get intent details
+  const { data: intent, error: intentError } = await supabase
+    .from('calendar_intents')
+    .select('*')
+    .eq('id', intentId)
+    .single();
+    
+  if (intentError || !intent) return c.json({ error: 'Intent not found' }, 404);
+  if (!intent.start_time) return c.json({ error: 'start_time is required' }, 400);
+  if (intent.sync_status === 'synced') return c.json({ error: 'Already synced' }, 400);
+
+  const authClient = await getGoogleAuthClient(intent.user_id);
+  if (!authClient) return c.json({ error: 'Google Calendar not authorized. Please visit /auth/google first.', code: 'NOT_AUTHORIZED' }, 401);
+  
+  const calendar = google.calendar({ version: 'v3', auth: authClient });
+  
+  try {
+    const eventParams: any = {
+      summary: intent.title,
+      description: intent.source_quote ? `來源備註: ${intent.source_quote}` : '',
+      start: { dateTime: new Date(intent.start_time).toISOString() },
+      end: { dateTime: new Date(intent.end_time || new Date(new Date(intent.start_time).getTime() + 60*60*1000)).toISOString() }
+    };
+    if (intent.location) eventParams.location = intent.location;
+    
+    const res = await calendar.events.insert({
+      calendarId: 'primary',
+      requestBody: eventParams
+    });
+    
+    // Update DB
+    await supabase.from('calendar_intents').update({
+      sync_status: 'synced',
+      external_calendar_id: res.data.id,
+      synced_at: new Date().toISOString()
+    }).eq('id', intentId);
+    
+    return c.json({ success: true, eventId: res.data.id });
+  } catch (err: any) {
+    console.error('Calendar sync error:', err);
+    
+    await supabase.from('calendar_intents').update({
+      sync_status: 'failed'
+    }).eq('id', intentId);
+    
+    return c.json({ error: 'Failed to sync event', details: err.message }, 500);
+  }
+});
+
+// POST /api/calendar-intents/sync-batch
+googleCalendarRouter.post('/calendar-intents/sync-batch', async (c) => {
+  // Extract user_id from body or auth context (assuming passed in body for simplicity now)
+  const body = await c.req.json();
+  const userId = body.user_id;
+  if (!userId) return c.json({ error: 'user_id is required' }, 400);
+  
+  const { data: intents } = await supabase
+    .from('calendar_intents')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('sync_status', 'ready')
+    .not('start_time', 'is', null);
+    
+  if (!intents || intents.length === 0) return c.json({ success: true, synced_count: 0 });
+  
+  const authClient = await getGoogleAuthClient(userId);
+  if (!authClient) return c.json({ error: 'Google Calendar not authorized', code: 'NOT_AUTHORIZED' }, 401);
+  
+  const calendar = google.calendar({ version: 'v3', auth: authClient });
+  
+  let syncedCount = 0;
+  const errors = [];
+  
+  for (const intent of intents) {
+    if (intent.needs_review) continue; // Skip items needing review based on spec
+    
+    try {
+      const eventParams: any = {
+        summary: intent.title,
+        description: intent.source_quote ? `來源備註: ${intent.source_quote}` : '',
+        start: { dateTime: new Date(intent.start_time).toISOString() },
+        end: { dateTime: new Date(intent.end_time || new Date(new Date(intent.start_time).getTime() + 60*60*1000)).toISOString() }
+      };
+      if (intent.location) eventParams.location = intent.location;
+      
+      const res = await calendar.events.insert({
+        calendarId: 'primary',
+        requestBody: eventParams
+      });
+      
+      await supabase.from('calendar_intents').update({
+        sync_status: 'synced',
+        external_calendar_id: res.data.id,
+        synced_at: new Date().toISOString()
+      }).eq('id', intent.id);
+      
+      syncedCount++;
+    } catch (e: any) {
+      console.error('Batch sync error for intent', intent.id, e);
+      errors.push({ id: intent.id, error: e.message });
+      await supabase.from('calendar_intents').update({ sync_status: 'failed' }).eq('id', intent.id);
+    }
+  }
+  
+  return c.json({ success: true, synced_count: syncedCount, errors });
+});
