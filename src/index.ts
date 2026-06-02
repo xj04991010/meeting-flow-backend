@@ -10,6 +10,9 @@ import { startCronJobs } from './cron';
 import { generateResearchReport } from './research';
 import { telegramRoute } from './routes/telegram';
 import { startJobWorker } from './jobs/workers';
+import { sendTelegram, sendThinkingMessage, editTelegramMessage, answerCallbackQuery, getTelegramFileBuffer } from './services/telegram.service';
+import { callLLM, transcribeAudio } from './services/llm.service';
+import { getOrCreateUser } from './repositories/users.repo';
 
 dotenv.config();
 
@@ -21,19 +24,8 @@ startJobWorker();
 type Variables = { userId: string };
 const app = new Hono<{ Variables: Variables }>();
 
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
-const DASHBOARD_BASE_URL = 'https://mf-dashboard-2026.surge.sh';
-function getDashboardUrl(uid?: string) {
-  return uid ? `${DASHBOARD_BASE_URL}?uid=${uid}` : DASHBOARD_BASE_URL;
-}
-const PORT = Number(process.env.PORT || 3000);
-const PARSER_VERSION = 'meeting-extract-v2';
-const GROQ_TIMEOUT_MS = 90_000;
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+import { SUPABASE_URL, SUPABASE_KEY, TELEGRAM_BOT_TOKEN, GROQ_API_KEY, DASHBOARD_BASE_URL, getDashboardUrl, PORT, PARSER_VERSION, GROQ_TIMEOUT_MS, requireEnv } from './utils/env';
+import { supabase } from './utils/db';
 
 app.use('/api/*', cors({
   origin: ['http://127.0.0.1:5173', 'http://localhost:5173', 'https://mf-dashboard-2026.surge.sh'],
@@ -102,66 +94,11 @@ type TelegramButton = {
   web_app?: { url: string };
 };
 
-const ExtractedTaskSchema = z.object({
-  title: z.string().nullable().optional(),
-  client: z.string().nullable().optional(),
-  owner: z.string().nullable().optional(),
-  deadline: z.string().nullable().optional(),
-  priority: z.enum(['high', 'medium', 'low']).nullable().optional(),
-  category: z.string().nullable().optional(),
-  confidence: z.number().nullable().optional(),
-  needs_review: z.boolean().nullable().optional(),
-  source_quote: z.string().nullable().optional()
-});
-type ExtractedTask = z.infer<typeof ExtractedTaskSchema>;
+import { ExtractedTaskSchema, ExtractedTask, ExtractedEventSchema, ExtractedEvent, ParserOutputSchema, ParserOutput, BatchSummary } from './schemas/extraction.schema';
 
-const ExtractedEventSchema = z.object({
-  title: z.string().nullable().optional(),
-  client: z.string().nullable().optional(),
-  start_time: z.string().nullable().optional(),
-  end_time: z.string().nullable().optional(),
-  location: z.string().nullable().optional(),
-  confidence: z.number().nullable().optional(),
-  needs_review: z.boolean().nullable().optional(),
-  source_quote: z.string().nullable().optional()
-});
-type ExtractedEvent = z.infer<typeof ExtractedEventSchema>;
 
-const ParserOutputSchema = z.object({
-  reply_message: z.string().nullable().optional(),
-  tasks: z.array(ExtractedTaskSchema).nullable().optional(),
-  events: z.array(ExtractedEventSchema).nullable().optional(),
-  memories: z.array(z.string()).nullable().optional(),
-  unresolved_notes: z.array(z.string().nullable()).nullable().optional()
-});
-type ParserOutput = z.infer<typeof ParserOutputSchema>;
 
-type BatchSummary = {
-  batchId: string | null;
-  taskCount: number;
-  eventCount: number;
-  reviewCount: number;
-  autoReadyEventCount: number;
-  taskIds?: string[];
-};
 
-type RouteDecision = {
-  mode: 'full_extraction' | 'supplement';
-  reason: string;
-};
-
-function requireEnv() {
-  const missing = [
-    ['SUPABASE_URL', SUPABASE_URL],
-    ['SUPABASE_SERVICE_ROLE_KEY', SUPABASE_KEY],
-    ['TELEGRAM_BOT_TOKEN', TELEGRAM_BOT_TOKEN],
-    ['GROQ_API_KEY', GROQ_API_KEY]
-  ].filter(([, value]) => !value);
-
-  if (missing.length > 0) {
-    console.warn(`Missing environment variables: ${missing.map(([key]) => key).join(', ')}`);
-  }
-}
 
 function normalizeConfidence(value: unknown): number {
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -227,94 +164,13 @@ function makeReviewFlag(confidence: number, explicitNeedsReview: unknown, hasReq
   return Boolean(explicitNeedsReview) || confidence < 0.85 || !hasRequiredTime;
 }
 
-export async function sendTelegram(chatId: number, text: string, buttons?: TelegramButton[][]) {
-  try {
-    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        reply_markup: buttons ? { inline_keyboard: buttons } : undefined
-      })
-    });
-  } catch (error) {
-    console.error('sendTelegram error', error);
-  }
-}
 
-async function sendThinkingMessage(chatId: number, isShort: boolean = false): Promise<number | null> {
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: isShort ? '📝 收到，為您安排中...' : '收到，我正在萃取會議中的待辦與行程。長篇紀錄可能需要 10~30 秒，請稍候。'
-      })
-    });
-    const data = await response.json() as any;
-    return data.result?.message_id || null;
-  } catch (error) {
-    console.error('sendThinkingMessage error', error);
-    return null;
-  }
-}
-
-async function editTelegramMessage(chatId: number, messageId: number, text: string, buttons?: TelegramButton[][]) {
-  try {
-    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/editMessageText`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        message_id: messageId,
-        text,
-        reply_markup: buttons ? { inline_keyboard: buttons } : undefined
-      })
-    });
-  } catch (error) {
-    console.error('editTelegramMessage error', error);
-  }
-}
-
-async function answerCallbackQuery(callbackQueryId: string, text?: string) {
-  try {
-    await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callback_query_id: callbackQueryId, text })
-    });
-  } catch (error) {
-    console.error('answerCallbackQuery error', error);
-  }
-}
 
 // chat_history 已停用 — 不再寫入，避免浪費 DB 資源
 // 如果未來需要 audit log，可重新啟用此函式
 // async function appendChatHistory(userId: string, role: 'user' | 'assistant', content: string) { ... }
 
-async function getOrCreateUser(telegramChatId: number): Promise<string> {
-  const { data: user } = await supabase
-    .from('users')
-    .select('id')
-    .eq('telegram_chat_id', telegramChatId)
-    .maybeSingle();
 
-  if (user) return user.id;
-
-  const { data: newUser, error } = await supabase
-    .from('users')
-    .insert({ telegram_chat_id: telegramChatId })
-    .select('id')
-    .single();
-
-  if (error || !newUser) {
-    throw new Error(`Failed to create user: ${error?.message || 'unknown error'}`);
-  }
-
-  return newUser.id;
-}
 
 async function getLatestSourceBatch(userId: string) {
   const { data } = await supabase
@@ -327,126 +183,9 @@ async function getLatestSourceBatch(userId: string) {
   return data;
 }
 
-interface UserSettings {
-  ai_provider: string;
-  ai_model: string;
-  api_key: string;
-}
 
-async function getUserSettings(userId: string): Promise<UserSettings | null> {
-  const { data } = await supabase.from('users').select('ai_provider, ai_model, api_key').eq('id', userId).single();
-  if (!data || !data.api_key) return null;
-  return data as UserSettings;
-}
 
-async function callLLM(userId: string, messages: any[], opts?: { type?: 'text' | 'json_object', temperature?: number }) {
-  const settings = await getUserSettings(userId);
-  const provider = settings?.ai_provider || 'groq';
-  const model = settings?.ai_model || 'llama-3.3-70b-versatile';
-  const apiKey = settings?.api_key || GROQ_API_KEY;
 
-  if (!apiKey) {
-    throw new Error('API Key is missing. Please configure it in the dashboard settings.');
-  }
-
-  const payload = {
-    model,
-    messages,
-    temperature: opts?.temperature ?? 0.1,
-    ...(opts?.type ? { response_format: { type: opts.type } } : {})
-  };
-
-  let endpoint = 'https://api.groq.com/openai/v1/chat/completions';
-  if (provider === 'openai') endpoint = 'https://api.openai.com/v1/chat/completions';
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(GROQ_TIMEOUT_MS)
-  });
-
-  const data = await response.json() as any;
-  if (!response.ok || data.error) {
-    throw new Error(data.error?.message || `LLM request failed with status ${response.status}`);
-  }
-
-  const content = data.choices?.[0]?.message?.content;
-  if (!hasMeaningfulText(content)) {
-    throw new Error('LLM returned an empty response');
-  }
-
-  return content;
-}
-
-function looksLikeLongMeetingNote(text: string) {
-  const lineCount = text.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
-  const dateMentionCount = (text.match(/\b\d{1,2}[/-]\d{1,2}\b|明天|後天|下週|月底|月初/g) || []).length;
-  const separatorCount = (text.match(/---|——|===|___/g) || []).length;
-  return text.length >= 220 || lineCount >= 6 || dateMentionCount >= 4 || separatorCount >= 2;
-}
-
-function looksLikeExplicitSupplement(text: string) {
-  const normalized = text.trim().toLowerCase();
-  const patterns = [
-    /^(上面|剛剛|剛才|前面|那篇|這篇|同一批|同一份|上一份)/,
-    /(幫我)?(補|補上|新增|加上|多加|再加|追加|改成|修改|更新|刪掉|移除)/,
-    /(這個|那個).*(任務|待辦|行程|日期|時間|客戶|負責人)/,
-    /(上一筆|最近一筆|最新一筆).*(批次|會議|紀錄|資料)/
-  ];
-  return patterns.some((pattern) => pattern.test(normalized));
-}
-
-function looksLikeStandaloneShortCommand(text: string) {
-  const normalized = text.trim();
-  const hasContextReference = /(上面|剛剛|剛才|前面|那篇|這篇|同一批|上一筆|最近一筆)/.test(normalized);
-  const hasConcreteAction = /(提醒我|排|建立|新增|記得|明天|後天|今天|下週|\d{1,2}[/-]\d{1,2})/.test(normalized);
-  return text.length <= 120 && hasConcreteAction && !hasContextReference;
-}
-
-async function classifyAmbiguousShortInput(userId: string, text: string): Promise<boolean> {
-  try {
-    const content = await callLLM(userId, [
-      { role: 'system', content: `判斷使用者的輸入是否是「針對剛才會議紀錄的補充或修改指示」(例如：上面那篇多加一個任務、把日期改成明天、新增一個行程)，還是「完全無關的閒聊或全新的大篇幅獨立事件」。如果是補充修改，輸出 { "is_supplement": true }，否則輸出 { "is_supplement": false }。` },
-      { role: 'user', content: text }
-    ], { type: 'json_object' });
-    const parsed = JSON.parse(content || '{}');
-    return !!parsed.is_supplement;
-  } catch (e) {
-    return false;
-  }
-}
-
-async function decideInputRoute(userId: string, text: string): Promise<RouteDecision> {
-  const latestBatch = await getLatestSourceBatch(userId);
-  if (!latestBatch) return { mode: 'full_extraction', reason: 'no_source_batch' };
-  if (looksLikeLongMeetingNote(text)) return { mode: 'full_extraction', reason: 'long_meeting_note' };
-  if (looksLikeExplicitSupplement(text)) return { mode: 'supplement', reason: 'explicit_supplement_rule' };
-  if (looksLikeStandaloneShortCommand(text)) return { mode: 'full_extraction', reason: 'standalone_short_command' };
-
-  if (text.length <= 200) {
-    const isSupplement = await classifyAmbiguousShortInput(userId, text);
-    return {
-      mode: isSupplement ? 'supplement' : 'full_extraction',
-      reason: isSupplement ? 'llm_router_supplement' : 'llm_router_full'
-    };
-  }
-
-  return { mode: 'full_extraction', reason: 'default_full' };
-}
-
-function buildBatchContext(batch: { summary?: string | null; raw_text?: string | null }) {
-  const summary = batch.summary ? `Summary: ${batch.summary.trim()}\n\n` : '';
-  const rawText = batch.raw_text || '';
-  const contextLimit = 8000;
-  const clippedRawText = rawText.length > contextLimit
-    ? `${rawText.slice(0, contextLimit)}\n\n[內容過長，已截斷]`
-    : rawText;
-  return `${summary}Raw meeting note:\n${clippedRawText}`;
-}
 
 function buildExtractionPrompt(todayStr: string, customCategories: string[]) {
   const catsStr = customCategories.length > 0 ? customCategories.join('", "') : '操盤", "教育", "行政", "其他';
@@ -576,7 +315,7 @@ Rules:
 
 async function extractMeetingData(userId: string, text: string): Promise<ParserOutput> {
   const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
-  let content = '';
+  let content: string | null = '';
   try {
     const { data: userRow } = await supabase.from('users').select('custom_categories').eq('id', userId).single();
     const customCategories = userRow?.custom_categories || ['操盤', '教育', '行政', '其他'];
@@ -656,7 +395,7 @@ Rules:
 
 async function extractSupplementData(userId: string, text: string, batchContext: string): Promise<ParserOutput> {
   const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
-  let content = '';
+  let content: string | null = '';
   try {
     const { data: userRow } = await supabase.from('users').select('custom_categories').eq('id', userId).single();
     const customCategories = userRow?.custom_categories || ['操盤', '教育', '行政', '其他'];
@@ -837,21 +576,7 @@ async function persistExtraction(userId: string, rawText: string, result: Parser
   return { batchId, taskCount, eventCount, reviewCount, autoReadyEventCount, taskIds, memoryCount };
 }
 
-async function persistSupplement(userId: string, existingBatchId: string, result: ParserOutput): Promise<BatchSummary & { memoryCount?: number }> {
-  const tasksResult = await insertTasks(userId, existingBatchId, result.tasks || []);
-  const taskCount = Array.isArray(tasksResult) ? tasksResult.length : (tasksResult as number);
-  const eventCount = await insertEvents(userId, existingBatchId, result.events || []);
-  const memoryCount = await insertMemories(userId, result.memories || []);
-  const reviewCount = [
-    ...(result.tasks || []).map((task) => makeReviewFlag(normalizeConfidence(task.confidence), task.needs_review)),
-    ...(result.events || []).map((event) => makeReviewFlag(normalizeConfidence(event.confidence), event.needs_review, hasMeaningfulText(event.start_time)))
-  ].filter(Boolean).length + (result.unresolved_notes?.length || 0);
-  const autoReadyEventCount = (result.events || [])
-    .filter((event) => !makeReviewFlag(normalizeConfidence(event.confidence), event.needs_review, hasMeaningfulText(event.start_time)))
-    .length;
 
-  return { batchId: existingBatchId, taskCount, eventCount, reviewCount, autoReadyEventCount, memoryCount };
-}
 
 function buildTelegramSummary(userId: string, result: ParserOutput, summary: BatchSummary & { memoryCount?: number }) {
   // Fireflies.ai style detailed summary is now in reply_message
@@ -894,37 +619,7 @@ function booleanOrUndefined(value: unknown) {
   return typeof value === 'boolean' ? value : undefined;
 }
 
-async function getTelegramFileBuffer(fileId: string): Promise<Buffer> {
-  const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
-  const data = await res.json() as any;
-  if (!data.ok) throw new Error('Failed to get file info from Telegram');
-  const filePath = data.result.file_path;
-  
-  const fileRes = await fetch(`https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`);
-  const arrayBuffer = await fileRes.arrayBuffer();
-  return Buffer.from(arrayBuffer);
-}
 
-async function transcribeAudio(audioBuffer: Buffer, filename: string, apiKey: string): Promise<string> {
-  const formData = new FormData();
-  const blob = new Blob([audioBuffer as any], { type: 'audio/ogg' });
-  formData.append('file', blob, filename);
-  formData.append('model', 'whisper-large-v3-turbo');
-
-  const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: formData as any
-  });
-  
-  if (!res.ok) {
-    throw new Error(`Groq transcription failed: ${await res.text()}`);
-  }
-  const data = await res.json() as any;
-  return data.text;
-}
 
 export async function processTelegramUpdate(message: any) {
   const chatId = message.chat?.id;
@@ -940,7 +635,7 @@ export async function processTelegramUpdate(message: any) {
     existingThinkingMessageId = await sendThinkingMessage(chatId, false);
     try {
       const audioBuffer = await getTelegramFileBuffer(message.voice.file_id);
-      text = await transcribeAudio(audioBuffer, 'voice.ogg', GROQ_API_KEY);
+      text = await transcribeAudio(audioBuffer, 'voice.ogg');
       
       if (!text || text.trim() === '') {
         await editTelegramMessage(chatId, existingThinkingMessageId as number, '聽不清楚您的語音，請再說一次。');
@@ -1303,7 +998,7 @@ async function handleResearchCommand(chatId: number, userId: string, query: stri
   // Run in background so we don't block
   setTimeout(async () => {
     try {
-      const report = await generateResearchReport(query, isUrl);
+      const report = await generateResearchReport(userId, query, isUrl);
       
       // Extract title from report if possible, or keep the query
       let title = isUrl ? query : query;

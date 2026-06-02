@@ -5,10 +5,7 @@ import { sendTelegram } from './services/telegram.service';
 
 dotenv.config();
 
-const supabase = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+import { supabase } from './utils/db';
 
 // Keep track of notified events to prevent duplicate notifications
 const notifiedEventIds = new Set<string>();

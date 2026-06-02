@@ -1,12 +1,5 @@
-import { Groq } from 'groq-sdk';
-import * as dotenv from 'dotenv';
+import { callLLM } from './services/llm.service';
 import * as cheerio from 'cheerio';
-
-dotenv.config();
-
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
 
 const RESEARCH_PROMPT = `
 You are a world-class AI research assistant and technical writer. 
@@ -47,7 +40,7 @@ export async function fetchUrlText(url: string): Promise<string> {
 /**
  * Generate a Deep Research report for a topic or text
  */
-export async function generateResearchReport(input: string, isUrl: boolean = false): Promise<string> {
+export async function generateResearchReport(userId: string, input: string, isUrl: boolean = false): Promise<string> {
   let contentToAnalyze = input;
   
   if (isUrl) {
@@ -61,15 +54,10 @@ export async function generateResearchReport(input: string, isUrl: boolean = fal
     contentToAnalyze = `Please conduct a deep research and write a comprehensive report on the following topic:\n\n${input}`;
   }
 
-  const completion = await groq.chat.completions.create({
-    messages: [
-      { role: 'system', content: RESEARCH_PROMPT },
-      { role: 'user', content: contentToAnalyze }
-    ],
-    model: 'llama-3.3-70b-versatile',
-    temperature: 0.3,
-    max_tokens: 6000,
-  });
+  const content = await callLLM(userId, [
+    { role: 'system', content: RESEARCH_PROMPT },
+    { role: 'user', content: contentToAnalyze }
+  ], { type: 'text', temperature: 0.3 });
 
-  return completion.choices[0]?.message?.content || "No content generated.";
+  return content || "No content generated.";
 }
