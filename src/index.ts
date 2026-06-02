@@ -1925,60 +1925,25 @@ setupCronJobs();
 serve({
   fetch: app.fetch,
   port: PORT
-});
-
-// --- Telegram Long Polling (no tunnel needed!) ---
-let pollingOffset = 0;
-
-async function telegramPoll() {
-  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getUpdates?offset=${pollingOffset}&timeout=30&allowed_updates=["message","callback_query"]`;
-  const res = await fetch(url);
-  const data = await res.json() as any;
-  if (!data.ok || !data.result) return;
-
-  for (const update of data.result) {
-    pollingOffset = update.update_id + 1;
-
-    // Dedup via message_events table
-    const { data: existingEvent } = await supabase
-      .from('message_events')
-      .select('id')
-      .eq('update_id', update.update_id)
-      .maybeSingle();
-    if (existingEvent) continue;
-
-    await supabase.from('message_events').insert({
-      update_id: update.update_id,
-      payload: update,
-      status: 'received'
-    });
-
-    if (update.message) {
-      processTelegramUpdate(update.message).catch((error) => console.error('Polling worker failed:', error));
-    } else if (update.callback_query) {
-      handleCallbackQuery(update.callback_query).catch((error) => console.error('Polling callback failed:', error));
-    }
-  }
-}
-
-async function startPolling() {
-  console.log('🔄 Telegram polling mode started (no tunnel needed)');
-  // Clear any leftover webhook
-  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook`);
+}, async (info) => {
+  console.log(`Listening on http://localhost:${info.port}`);
   
-  let errorCount = 0;
-  
-  while (true) {
+  const externalUrl = process.env.RENDER_EXTERNAL_URL;
+  if (externalUrl && TELEGRAM_BOT_TOKEN) {
+    // V2 Route matches POST /webhook on the root
+    const webhookUrl = `${externalUrl}/webhook`; 
     try {
-      await telegramPoll();
-      errorCount = 0; // reset on success
-    } catch (err: any) {
-      errorCount++;
-      const backoff = Math.min(30000, 2000 * Math.pow(2, errorCount - 1));
-      console.error(`Telegram polling error (attempt ${errorCount}). Retrying in ${backoff}ms...`, err.message);
-      await new Promise(r => setTimeout(r, backoff));
+      const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${webhookUrl}`);
+      const data = await res.json() as any;
+      if (data.ok) {
+        console.log(`✅ Webhook successfully set to ${webhookUrl}`);
+      } else {
+        console.error(`❌ Failed to set webhook:`, data);
+      }
+    } catch (e) {
+      console.error(`❌ Error setting webhook:`, e);
     }
+  } else {
+    console.log('⚠️ No RENDER_EXTERNAL_URL found. Webhook not set automatically. If testing locally, use ngrok.');
   }
-}
-
-startPolling();
+});
