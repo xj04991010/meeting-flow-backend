@@ -446,6 +446,7 @@ Mission:
   2. 🗣️ Speaker Notes (發言要點)
   3. ✅ Action Items by Owner (各負責人待辦)
 - MANUAL SECONDARY CONFIRMATION: The user MUST manually review all events and tasks before they are synced to Google Calendar. Therefore, you MUST set "needs_review": true for EVERY SINGLE task and event extracted. Do not auto-approve anything.
+- CONVERSATIONAL FALLBACK: If the user is simply chatting, asking a question, or providing non-actionable input (e.g. "你有幾種功能", "你好"), DO NOT hallucinate tasks or events. Output an empty list for tasks and events. In `reply_message`, just provide a natural, helpful, and conversational response (no Fireflies format needed). Only use the Fireflies format when there are actual meeting points or tasks to extract.
 - STRICT CATEGORIZATION:
   * Events (events): Meetings, physical appointments. Must have a time constraint.
   * Tasks (tasks): Deliverables, script writing, video editing, etc.
@@ -456,7 +457,7 @@ Mission:
 
 Output JSON only:
 {
-  "reply_message": "DETAILED Markdown summary formatted like Fireflies.ai (Executive Summary, Speaker Notes, Action Items). Use Traditional Chinese.",
+  "reply_message": "If conversation, just reply naturally. If a meeting/schedule, output DETAILED Markdown summary formatted like Fireflies.ai. Use Traditional Chinese.",
   "tasks": [
     {
       "title": "specific action item (include context prefix)",
@@ -707,19 +708,18 @@ function buildTelegramSummary(result: ParserOutput, summary: BatchSummary) {
   // Fireflies.ai style detailed summary is now in reply_message
   const reply = result.reply_message?.trim() || `已成功萃取內容！`;
 
-  const lines = [reply, ''];
-  lines.push('---');
-
-  if (summary.taskCount > 0 || summary.eventCount > 0) {
-    lines.push(`💡 **系統已自動擷取 ${summary.taskCount} 件待辦與 ${summary.eventCount} 個行程**`);
-    lines.push('⚠️ **狀態：等待人工二次確認**');
-    lines.push('所有擷取的項目目前皆設為「待審閱」，請點擊下方按鈕前往 Dashboard 進行確認，確認後才會同步至您的 Google 日曆。');
-  } else {
-    lines.push('沒有偵測到具體的待辦或行程。');
+  if (summary.taskCount === 0 && summary.eventCount === 0) {
+    return reply; // Pure conversational response, no footer needed
   }
 
+  const lines = [reply, ''];
+  lines.push('---');
+  lines.push(`💡 **系統已自動擷取 ${summary.taskCount} 件待辦與 ${summary.eventCount} 個行程**`);
+  lines.push('⚠️ **狀態：等待人工二次確認**');
+  lines.push('所有擷取的項目目前皆設為「待審閱」，請點擊下方按鈕前往 Dashboard 進行確認，確認後才會同步至您的 Google 日曆。');
   lines.push('');
-  lines.push('🔗 [點此開啟 Dashboard 進行二次確認](http://localhost:5173)');
+  // 使用正式的 Surge 網址
+  lines.push('🔗 [點此開啟 Dashboard 進行二次確認](https://mf-dashboard-2026.surge.sh)');
   return lines.join('\n');
 }
 
