@@ -818,12 +818,72 @@ function booleanOrUndefined(value: unknown) {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+async function getTelegramFileBuffer(fileId: string): Promise<Buffer> {
+  const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getFile?file_id=${fileId}`);
+  const data = await res.json() as any;
+  if (!data.ok) throw new Error('Failed to get file info from Telegram');
+  const filePath = data.result.file_path;
+  
+  const fileRes = await fetch(`https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`);
+  const arrayBuffer = await fileRes.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+async function transcribeAudio(audioBuffer: Buffer, filename: string, apiKey: string): Promise<string> {
+  const formData = new FormData();
+  const blob = new Blob([audioBuffer as any], { type: 'audio/ogg' });
+  formData.append('file', blob, filename);
+  formData.append('model', 'whisper-large-v3-turbo');
+
+  const res = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: formData as any
+  });
+  
+  if (!res.ok) {
+    throw new Error(`Groq transcription failed: ${await res.text()}`);
+  }
+  const data = await res.json() as any;
+  return data.text;
+}
+
 async function processTelegramUpdate(message: any) {
   const chatId = message.chat?.id;
-  const text = message.text?.trim();
-  console.log(`[DEBUG] processTelegramUpdate called. chatId: ${chatId}, text: ${text}`);
+  let text = message.text?.trim();
+  
+  if (!chatId) return;
 
-  if (!chatId || !text) return;
+  let existingThinkingMessageId: number | null = null;
+
+  // Handle Voice Messages (Magic Feature 1)
+  if (message.voice) {
+    const userId = await getOrCreateUser(chatId);
+    existingThinkingMessageId = await sendThinkingMessage(chatId, false);
+    try {
+      const audioBuffer = await getTelegramFileBuffer(message.voice.file_id);
+      text = await transcribeAudio(audioBuffer, 'voice.ogg', GROQ_API_KEY);
+      
+      if (!text || text.trim() === '') {
+        await editTelegramMessage(chatId, existingThinkingMessageId as number, '聽不清楚您的語音，請再說一次。');
+        return;
+      }
+      
+      await editTelegramMessage(chatId, existingThinkingMessageId as number, `🗣️ **語音辨識成功：**\n「${text}」\n\n正在為您處理...`);
+      message.text = text; // fake it for downstream
+      delete message.voice;
+    } catch (e: any) {
+      console.error('Voice extraction error', e);
+      await editTelegramMessage(chatId, existingThinkingMessageId as number, `語音處理失敗：${e.message}`);
+      return;
+    }
+  }
+
+  if (!text) return;
+
+  console.log(`[DEBUG] processTelegramUpdate called. chatId: ${chatId}, text: ${text}`);
 
   const lowerText = text.toLowerCase();
 
@@ -867,15 +927,9 @@ async function processTelegramUpdate(message: any) {
   }
 
   const isShort = text.length <= 50;
-  const thinkingMessageId = await sendThinkingMessage(chatId, isShort);
+  const thinkingMessageId = existingThinkingMessageId || await sendThinkingMessage(chatId, isShort);
 
   const userId = await getOrCreateUser(chatId);
-
-  if (message.voice) {
-    const reply = '目前尚未接上語音轉文字。請先貼文字版會議紀錄，我會批次萃取待辦與行程。';
-    await editTelegramMessage(chatId as number, thinkingMessageId as number, reply);
-    return;
-  }
 
   // chat_history 已停用
 
@@ -1094,6 +1148,28 @@ async function handleCallbackQuery(callback: any) {
       
       const newText = originalText + `\n\n✅ 已設定推播提醒：${displayTime}`;
       await editTelegramMessage(chatId, messageId, newText, [[{ text: '打開 Dashboard 修改', url: getDashboardUrl() }]]);
+    } else {
+      await answerCallbackQuery(callback.id, '設定失敗，請稍後再試。');
+    }
+    return;
+  }
+
+  if (data && data.startsWith('postpone_task_')) {
+    const taskId = data.replace('postpone_task_', '');
+    
+    // Set to tomorrow 9 AM
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+
+    const { error } = await supabase.from('tasks').update({
+      deadline: tomorrow.toISOString()
+    }).eq('id', taskId);
+
+    if (!error) {
+      await answerCallbackQuery(callback.id, '✅ 已為您延後至明天早上 9 點');
+      const newText = originalText + `\n\n*(✔️ 已幫您延後至明天早上)*`;
+      await editTelegramMessage(chatId, messageId, newText, []); // Remove buttons
     } else {
       await answerCallbackQuery(callback.id, '設定失敗，請稍後再試。');
     }
@@ -1540,7 +1616,23 @@ setInterval(async () => {
         notifiedTasks.add(t.id);
         const { data: u } = await supabase.from('users').select('telegram_chat_id').eq('id', t.user_id).single();
         if (u && u.telegram_chat_id) {
-          await sendTelegram(Number(u.telegram_chat_id), `🔔 **溫馨提醒**\n\n您的待辦事項【${t.title}】已經到期啦！\n請記得處理喔！`, [[{ text: '去 Dashboard 確認', url: getDashboardUrl(t.user_id) }]]);
+          // Generate empathetic message
+          let message = `🔔 **溫馨提醒**\n\n您的待辦事項【${t.title}】已經到期啦！\n請記得處理喔！`;
+          try {
+            const prompt = `使用者有一個待辦任務「${t.title}」剛到期。請用語氣溫暖、貼心的口吻提醒他，字數限制 40 字以內，可以附帶一兩個 emoji。`;
+            const aiResponse = await callLLM(t.user_id, [{ role: 'user', content: prompt }], { type: 'text' });
+            if (aiResponse) {
+              message = `🔮 **貼心提醒**\n\n${aiResponse}`;
+            }
+          } catch (e) {
+            console.error('Failed to generate empathetic message', e);
+          }
+
+          const buttons = [
+            [{ text: '📅 幫我延到明天', callback_data: `postpone_task_${t.id}` }],
+            [{ text: '✅ 我去 Dashboard 看', url: getDashboardUrl(t.user_id) }]
+          ];
+          await sendTelegram(Number(u.telegram_chat_id), message, buttons);
         }
       }
     }
