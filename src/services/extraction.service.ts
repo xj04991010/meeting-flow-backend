@@ -6,6 +6,8 @@ import { sendTelegram, editTelegramMessage, getTelegramFileBuffer } from './tele
 import { updateSourceBatchSummary } from '../repositories/source-batches.repo';
 import { loadRelevantMemories } from './memory.service';
 import { createDecisionLog } from './decision-logger.service';
+import { loadPlaybookRules, buildPlaybookPrompt } from './playbook.service';
+import { calculateRiskScore, detectPrepGap } from './strategy.service';
 
 export async function processExtractionJob(userId: string, chatId: number, text: string, batchId: string, voiceFileId?: string | null) {
   try {
@@ -19,7 +21,7 @@ export async function processExtractionJob(userId: string, chatId: number, text:
 
     const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
     
-    // 1. Fetch user context & memories
+    // 1. Fetch user context & memories & rules
     const { data: userRow } = await supabase.from('users').select('custom_categories').eq('id', userId).single();
     const customCategories = userRow?.custom_categories || ['操盤', '教育', '行政', '其他'];
     const catsSchema = customCategories.length > 0 ? customCategories.join(' | ') : '操盤 | 教育 | 行政 | 其他';
@@ -27,10 +29,14 @@ export async function processExtractionJob(userId: string, chatId: number, text:
     const memories = await loadRelevantMemories(userId, inputText);
     const memoryContext = memories && memories.length > 0 ? `User Memories:\n${memories.map(m => `- ${m.content}`).join('\n')}` : 'No existing memories.';
 
+    const rules = await loadPlaybookRules(userId);
+    const playbookPrompt = buildPlaybookPrompt(rules);
+
     // 2. Build Prompt
     const systemPrompt = `You are an INTJ zero-BS Executive Assistant.
 Current Datetime (Asia/Taipei): ${todayStr}
 ${memoryContext}
+${playbookPrompt}
 
 Analyze the user input.
 - If it's a joke, useless chatter, or emotional venting, output type "REJECT_LOW_VALUE" and brutally reject it in reasoning_summary.
@@ -71,6 +77,25 @@ Output strictly valid JSON matching this schema:
     }
 
     const output = validation.data;
+
+    // Apply Strategy Engine Post-Processing
+    if (output.tasks && output.tasks.length > 0) {
+      output.tasks.forEach(t => {
+        // Only override if LLM didn't calculate a high risk score
+        const calcScore = calculateRiskScore(t);
+        if (calcScore > (t.risk_score || 0)) {
+          t.risk_score = calcScore;
+        }
+      });
+    }
+
+    if (output.events && output.events.length > 0) {
+      output.events.forEach(e => {
+        if (!e.prep_gap_notes && detectPrepGap(e.title)) {
+          e.prep_gap_notes = '系統偵測到可能需要會前準備資料，請確認是否齊全。';
+        }
+      });
+    }
 
     // Log the decision
     await createDecisionLog({
