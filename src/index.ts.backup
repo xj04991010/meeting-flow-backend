@@ -8,15 +8,11 @@ import { z } from 'zod';
 import { googleAuthRouter, googleCalendarRouter, syncBatchInternal } from './google';
 import { startCronJobs } from './cron';
 import { generateResearchReport } from './research';
-import { telegramRoute } from './routes/telegram';
-import { startJobWorker } from './jobs/workers';
 
 dotenv.config();
 
 // Initialize proactive background reminders
 startCronJobs();
-// Initialize V2 background processing workers
-startJobWorker();
 
 type Variables = { userId: string };
 const app = new Hono<{ Variables: Variables }>();
@@ -516,11 +512,10 @@ Rules:
 }
 
 interface IntentOutput {
-  intent: 'extract_meeting' | 'supplement' | 'delete_item' | 'query_schedule' | 'update_tasks' | 'chit_chat' | 'query_weather';
+  intent: 'extract_meeting' | 'supplement' | 'delete_item' | 'query_schedule' | 'update_tasks' | 'chit_chat';
   delete_keyword?: string | null;
   query_timeframe?: string | null;
   query_category?: string | null;
-  query_location?: string | null;
   update_action?: 'reschedule' | 'complete' | null;
   update_target_timeframe?: string | null;
   update_target_category?: string | null;
@@ -1763,8 +1758,38 @@ app.patch('/api/calendar-intents/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// Mount V2 Telegram Webhook (includes Fast ACK & Dedup)
-app.route('/', telegramRoute);
+app.post('/webhook', async (c) => {
+  try {
+    const update = await c.req.json();
+
+    if (update.update_id) {
+      const { data: existingEvent } = await supabase
+        .from('message_events')
+        .select('id')
+        .eq('update_id', update.update_id)
+        .maybeSingle();
+
+      if (existingEvent) return c.text('OK');
+
+      await supabase.from('message_events').insert({
+        update_id: update.update_id,
+        payload: update,
+        status: 'received'
+      });
+    }
+
+    if (update.message) {
+      processTelegramUpdate(update.message).catch((error) => console.error('Async worker failed:', error));
+    } else if (update.callback_query) {
+      handleCallbackQuery(update.callback_query).catch((error) => console.error('Callback worker failed:', error));
+    }
+
+    return c.text('OK');
+  } catch (error) {
+    console.error('Webhook error', error);
+    return c.text('OK');
+  }
+});
 
 app.post('/api/extract', async (c) => {
   try {
