@@ -509,14 +509,14 @@ Analyze the user's message and determine the intent.
 Output JSON only:
 {
   "intent": "extract_meeting" | "delete_item" | "query_schedule" | "chit_chat",
-  "delete_keyword": "string or null (e.g., '準備尼龍神最新報表')",
+  "delete_keyword": "string or null (Extract ONLY the core noun, e.g., '尼龍神' instead of '明天的尼龍神代辦')",
   "query_timeframe": "string or null (e.g., '明天', '下週')",
   "reply_message": "string or null (natural conversational reply if chit_chat)"
 }
 
 Rules:
 - "extract_meeting": User wants to create, add, or record tasks/events, or provides meeting notes (e.g. "新增任務", "幫我排開會").
-- "delete_item": User wants to delete, cancel, or remove an existing item (e.g. "刪除 報表", "取消會議"). Set "delete_keyword".
+- "delete_item": User wants to delete, cancel, or remove an existing item (e.g. "刪除 報表", "取消會議"). Set "delete_keyword" to the core noun.
 - "query_schedule": User asks what their schedule/tasks are (e.g. "我明天有什麼事", "總結一下待辦"). Set "query_timeframe".
 - "chit_chat": General questions or greetings (e.g. "你有什麼功能", "你好"). Set "reply_message".`;
 
@@ -855,11 +855,18 @@ async function processTelegramUpdate(message: any) {
     console.log(`[Router] intent=${route.intent} keyword=${route.delete_keyword} timeframe=${route.query_timeframe}`);
 
     if (route.intent === 'delete_item' && route.delete_keyword) {
-      // Find matching tasks
-      const { data: tasks } = await supabase.from('tasks').select('id, title').eq('user_id', userId).ilike('title', `%${route.delete_keyword}%`).limit(1);
+      // Find matching tasks with ilike
+      const { data: tasks } = await supabase.from('tasks').select('id, title').eq('user_id', userId).ilike('title', `%${route.delete_keyword}%`).limit(5);
+      
       if (tasks && tasks.length > 0) {
-        await supabase.from('tasks').delete().eq('id', tasks[0].id);
-        await editTelegramMessage(chatId as number, thinkingMessageId as number, `✅ 已為您刪除任務：「${tasks[0].title}」`);
+        // Construct interactive buttons for each found task
+        let replyText = `🔍 為您找到 ${tasks.length} 筆包含「${route.delete_keyword}」的任務，請問要刪除哪一項？`;
+        const buttons: TelegramButton[][] = tasks.map(t => [
+          { text: `🗑️ 刪除: ${t.title}`, callback_data: `delete_task_${t.id}` }
+        ]);
+        buttons.push([{ text: '❌ 取消', callback_data: `cancel_delete` }]);
+        
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, replyText, buttons);
       } else {
         await editTelegramMessage(chatId as number, thinkingMessageId as number, `找不到包含「${route.delete_keyword}」的相關任務，請確認名稱是否正確。`);
       }
@@ -1085,6 +1092,26 @@ async function handleCallbackQuery(callback: any) {
       .replace('所有擷取的項目目前皆設為「待審閱」，請點擊下方按鈕前往 Dashboard 進行確認，確認後才會同步至您的 Google 日曆。', '所有行程已排入同步佇列！');
       
     await editTelegramMessage(chatId, messageId, newText, [[{ text: '打開 Dashboard 修改細節', url: DASHBOARD_URL }]]);
+    return;
+  }
+
+  if (data && data.startsWith('delete_task_')) {
+    const taskId = data.replace('delete_task_', '');
+    const { data: task } = await supabase.from('tasks').select('title').eq('id', taskId).single();
+    if (task) {
+      await supabase.from('tasks').delete().eq('id', taskId);
+      await answerCallbackQuery(callback.id, `✅ 任務已刪除！`);
+      await editTelegramMessage(chatId, messageId, `✅ 已成功為您刪除任務：「${task.title}」`);
+    } else {
+      await answerCallbackQuery(callback.id, `找不到該任務。`);
+      await editTelegramMessage(chatId, messageId, `❌ 找不到該任務，可能已被刪除。`);
+    }
+    return;
+  }
+
+  if (data === 'cancel_delete') {
+    await answerCallbackQuery(callback.id, `已取消操作。`);
+    await editTelegramMessage(chatId, messageId, `操作已取消。`);
     return;
   }
 
