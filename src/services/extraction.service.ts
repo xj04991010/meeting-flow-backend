@@ -4,6 +4,8 @@ import { insertAiCandidates } from '../repositories/ai-candidates.repo';
 import { supabase } from '../utils/db';
 import { sendTelegram, editTelegramMessage, getTelegramFileBuffer } from './telegram.service';
 import { updateSourceBatchSummary } from '../repositories/source-batches.repo';
+import { loadRelevantMemories } from './memory.service';
+import { createDecisionLog } from './decision-logger.service';
 
 export async function processExtractionJob(userId: string, chatId: number, text: string, batchId: string, voiceFileId?: string | null) {
   try {
@@ -22,7 +24,7 @@ export async function processExtractionJob(userId: string, chatId: number, text:
     const customCategories = userRow?.custom_categories || ['操盤', '教育', '行政', '其他'];
     const catsSchema = customCategories.length > 0 ? customCategories.join(' | ') : '操盤 | 教育 | 行政 | 其他';
 
-    const { data: memories } = await supabase.from('memories').select('content').eq('user_id', userId).order('importance', { ascending: false }).limit(20);
+    const memories = await loadRelevantMemories(userId, inputText);
     const memoryContext = memories && memories.length > 0 ? `User Memories:\n${memories.map(m => `- ${m.content}`).join('\n')}` : 'No existing memories.';
 
     // 2. Build Prompt
@@ -69,6 +71,18 @@ Output strictly valid JSON matching this schema:
     }
 
     const output = validation.data;
+
+    // Log the decision
+    await createDecisionLog({
+      userId,
+      sourceBatchId: batchId,
+      decisionType: output.type,
+      inputText,
+      selectedMemories: memories.map(m => m.id),
+      outputJson: rawJSON,
+      model: 'llama-3.3-70b-versatile', // hardcoded for now, or extracted from callLLM response if possible
+      confidence: output.confidence
+    });
 
     // 5. Handle Low Value / Strategy immediately
     if (output.type === 'REJECT_LOW_VALUE') {

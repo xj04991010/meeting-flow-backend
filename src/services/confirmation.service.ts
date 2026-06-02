@@ -1,6 +1,8 @@
 import { supabase } from '../utils/db';
 import { sendTelegram, editTelegramMessage, answerCallbackQuery } from './telegram.service';
 import { updateSourceBatchSummary } from '../repositories/source-batches.repo';
+import { updateDecisionLogByBatchId } from './decision-logger.service';
+import { reinforceMemory, penalizeMemory } from './memory.service';
 
 export async function processConfirmationJob(userId: string, chatId: number, callbackId: string, data: string, messageId: number) {
   try {
@@ -18,13 +20,24 @@ export async function processConfirmationJob(userId: string, chatId: number, cal
       await updateSourceBatchSummary(batchId, 'Ignored by user.');
       
       if (ignoredCandidates) {
-        const evalLogs = ignoredCandidates.map(c => ({
-          user_id: userId,
-          source_batch_id: batchId,
-          original_candidate: c.payload,
-          final_action: 'ignored'
-        }));
-        await supabase.from('ai_evaluations').insert(evalLogs);
+        const { data: dLog } = await supabase.from('decision_logs').select('id, selected_memories').eq('source_batch_id', batchId).single();
+        if (dLog) {
+          await updateDecisionLogByBatchId(batchId, 'rejected');
+          if (dLog.selected_memories) {
+            for (const memId of dLog.selected_memories) {
+              await penalizeMemory(memId);
+            }
+          }
+          
+          const feedbackLogs = ignoredCandidates.map(c => ({
+            user_id: userId,
+            decision_log_id: dLog.id,
+            feedback_type: 'rejected',
+            original_payload: c.payload,
+            final_payload: null
+          }));
+          await supabase.from('user_feedback').insert(feedbackLogs);
+        }
       }
       
       await editTelegramMessage(chatId, messageId, '🗑️ 此批次的解析結果已全數捨棄。');
@@ -90,15 +103,25 @@ export async function processConfirmationJob(userId: string, chatId: number, cal
         await supabase.from('ai_candidates').update({ status: 'confirmed' }).eq('id', candidate.id);
       }
       
-      // Save to eval dataset
-      const evalLogs = candidates.map(c => ({
-        user_id: userId,
-        source_batch_id: batchId,
-        original_candidate: c.payload,
-        final_action: 'confirmed_as_is',
-        final_payload: c.payload
-      }));
-      await supabase.from('ai_evaluations').insert(evalLogs);
+      // Save to eval dataset and update decision log
+      const { data: dLog } = await supabase.from('decision_logs').select('id, selected_memories').eq('source_batch_id', batchId).single();
+      if (dLog) {
+        await updateDecisionLogByBatchId(batchId, 'accepted');
+        if (dLog.selected_memories) {
+          for (const memId of dLog.selected_memories) {
+            await reinforceMemory(memId);
+          }
+        }
+        
+        const feedbackLogs = candidates.map(c => ({
+          user_id: userId,
+          decision_log_id: dLog.id,
+          feedback_type: 'accepted',
+          original_payload: c.payload,
+          final_payload: c.payload
+        }));
+        await supabase.from('user_feedback').insert(feedbackLogs);
+      }
 
       await updateSourceBatchSummary(batchId, 'Confirmed all items by user.');
       
