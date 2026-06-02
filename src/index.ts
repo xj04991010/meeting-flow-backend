@@ -1304,8 +1304,9 @@ app.get('/api/dashboard/weekly', async (c) => {
   const { data: intents } = await supabase.from('calendar_intents').select('*').eq('user_id', userId).neq('status', 'cancelled').order('created_at', { ascending: false });
   const { data: batches } = await supabase.from('source_batches').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(5);
 
-  // 取得現在台北時間的 YYYY-MM-DD
-  const now = new Date();
+  // 取得基準時間的 YYYY-MM-DD
+  const dateQuery = c.req.query('date');
+  const now = dateQuery ? new Date(dateQuery) : new Date();
   const getTaipeiDate = (d: Date) => d.toLocaleString('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' });
   const todayStr = getTaipeiDate(now);
   const todayTime = new Date(todayStr).getTime();
