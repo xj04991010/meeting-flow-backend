@@ -8,7 +8,7 @@ export const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 export const PORT = Number(process.env.PORT || 3000);
 export const PARSER_VERSION = 'meeting-extract-v2';
 export const GROQ_TIMEOUT_MS = 90_000;
-export const DASHBOARD_BASE_URL = 'https://mf-dashboard-2026.surge.sh';
+export const DASHBOARD_BASE_URL = 'https://meeting-flow-backend-1.onrender.com';
 
 export function getDashboardUrl(uid?: string) {
   return uid ? `${DASHBOARD_BASE_URL}?uid=${uid}` : DASHBOARD_BASE_URL;

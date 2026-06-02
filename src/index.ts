@@ -28,7 +28,7 @@ import { SUPABASE_URL, SUPABASE_KEY, TELEGRAM_BOT_TOKEN, GROQ_API_KEY, DASHBOARD
 import { supabase } from './utils/db';
 
 app.use('/api/*', cors({
-  origin: ['http://127.0.0.1:5173', 'http://localhost:5173', 'https://mf-dashboard-2026.surge.sh'],
+  origin: ['http://127.0.0.1:5173', 'http://localhost:5173', 'https://meeting-flow-backend-1.onrender.com'],
   allowMethods: ['GET', 'PATCH', 'POST', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization']
 }));

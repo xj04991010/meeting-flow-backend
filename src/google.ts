@@ -206,7 +206,7 @@ export async function syncBatchInternal(userId: string) {
     try {
       const { data: user } = await supabase.from('users').select('telegram_chat_id').eq('id', userId).single();
       if (user && user.telegram_chat_id) {
-        const url = `https://mf-dashboard-2026.surge.sh?uid=${userId}`;
+        const url = `https://meeting-flow-backend-1.onrender.com?uid=${userId}`;
         const replyMarkup = { inline_keyboard: [[{ text: '重新綁定 Google', url: url }]] };
         await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
           method: 'POST',

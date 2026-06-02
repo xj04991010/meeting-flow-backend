@@ -82,7 +82,7 @@ export function startCronJobs() {
             const template = reminderTemplates[Math.floor(Math.random() * reminderTemplates.length)];
             const message = template(t.title);
             
-            const dashboardUrl = `https://mf-dashboard-2026.surge.sh?uid=${t.user_id}`;
+            const dashboardUrl = `https://meeting-flow-backend-1.onrender.com?uid=${t.user_id}`;
             const buttons = [
               [{ text: '📅 幫我延到明天', callback_data: `postpone_task_${t.id}` }],
               [{ text: '✅ 我去 Dashboard 看', url: dashboardUrl }]
