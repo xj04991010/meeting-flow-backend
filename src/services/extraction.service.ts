@@ -129,7 +129,7 @@ Output strictly valid JSON matching this schema:
     
     await sendTelegram(chatId, summaryMsg, [
       [{ text: '✅ 確認全部 (Confirm All)', callback_data: `confirm_all:${batchId}` }],
-      [{ text: '🔍 進入儀表板細部修改', url: `https://mf-dashboard-2026.surge.sh?uid=${userId}&batch=${batchId}` }],
+      [{ text: '🔍 進入儀表板細部修改', url: `https://meeting-flow-backend-1.onrender.com?uid=${userId}&batch=${batchId}` }],
       [{ text: '🗑️ 忽略丟棄 (Ignore)', callback_data: `ignore:${batchId}` }]
     ]);
 
