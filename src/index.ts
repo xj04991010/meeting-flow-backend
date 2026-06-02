@@ -71,7 +71,8 @@ app.use('/api/*', async (c, next) => {
       const userObj = JSON.parse(decodeURIComponent(userJson));
       const tgId = userObj.id;
       // Convert to our internal uuid
-      const { data } = await supabase.from('users').select('id').eq('telegram_id', tgId).maybeSingle();
+      const { data, error } = await supabase.from('users').select('id').eq('telegram_chat_id', tgId).maybeSingle();
+      if (error) console.error('TMA db error:', error);
       if (!data) return c.json({ error: 'User not found in system' }, 401);
       c.set('userId', data.id);
       return await next();
