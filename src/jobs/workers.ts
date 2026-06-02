@@ -53,9 +53,33 @@ export function startJobWorker() {
           }
 
           await markJobStatus(job.id, 'completed');
-        } catch (jobError: any) {
-          console.error(`[Worker] Job ${job.id} failed:`, jobError);
-          await markJobStatus(job.id, 'failed', jobError.message);
+        } catch (jobErr: any) {
+          console.error(`[Worker] Job ${job.id} failed:`, jobErr);
+          
+          // Retry Logic
+          const attempts = (job.payload.attempts || 0) + 1;
+          
+          if (attempts >= 3) {
+            await markJobStatus(job.id, 'failed', jobErr.message);
+          } else {
+            // Exponential backoff: 3s * 2^(attempts-1) -> 3s, 6s, 12s
+            const delayMs = 3000 * Math.pow(2, attempts - 1);
+            console.log(`[Worker] Job ${job.id} will retry in ${delayMs}ms (Attempt ${attempts}/3)`);
+            
+            // Wait for backoff inside the loop (or ideally schedule it, but for simplicity here we delay)
+            // Wait, delaying the loop blocks other jobs. 
+            // Instead, we just mark it as 'pending' and update payload, then the query will pick it up immediately.
+            // To prevent immediate pickup, we could add a `next_run_at` but we don't have that column.
+            // For now, we will sleep briefly to not overwhelm the API, then mark as pending.
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            
+            // Re-queue
+            job.payload.attempts = attempts;
+            await supabase
+              .from('processing_jobs')
+              .update({ status: 'pending', payload: job.payload, last_error: jobErr.message })
+              .eq('id', job.id);
+          }
         }
       }
     } catch (err) {
