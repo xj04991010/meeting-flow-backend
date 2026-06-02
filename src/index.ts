@@ -100,7 +100,7 @@ const ExtractedTaskSchema = z.object({
   client: z.string().nullable().optional(),
   owner: z.string().nullable().optional(),
   deadline: z.string().nullable().optional(),
-  priority: z.enum(['high', 'normal', 'low']).nullable().optional(),
+  priority: z.enum(['high', 'medium', 'low']).nullable().optional(),
   confidence: z.number().nullable().optional(),
   needs_review: z.boolean().nullable().optional(),
   source_quote: z.string().nullable().optional()
@@ -565,7 +565,8 @@ async function extractMeetingData(userId: string, text: string): Promise<ParserO
       };
     } else {
       console.error('Zod schema validation failed for extractMeetingData:', result.error);
-      return { reply_message: 'AI 輸出格式異常，已啟用安全回退機制。', tasks: [], events: [], unresolved_notes: [] };
+      const errMsgs = result.error.issues.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ');
+      return { reply_message: `AI 輸出格式異常，已啟用安全回退機制。(Debug: ${errMsgs})`, tasks: [], events: [], unresolved_notes: [] };
     }
   } catch (err) {
     console.error('Failed to parse LLM output:', err, 'Content:', content);
@@ -625,7 +626,8 @@ async function extractSupplementData(userId: string, text: string, batchContext:
       };
     } else {
       console.error('Zod schema validation failed for extractSupplementData:', result.error);
-      return { reply_message: 'AI 輸出格式異常，已啟用安全回退機制。', tasks: [], events: [], unresolved_notes: [] };
+      const errMsgs = result.error.issues.map((e: any) => `${e.path.join('.')}: ${e.message}`).join(', ');
+      return { reply_message: `AI 輸出格式異常，已啟用安全回退機制。(Debug: ${errMsgs})`, tasks: [], events: [], unresolved_notes: [] };
     }
   } catch (err) {
     console.error('Failed to parse LLM output in supplement:', err, 'Content:', content);
