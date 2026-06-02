@@ -12,7 +12,6 @@
     "@hono/node-server": "^1.11.1",
     "@supabase/supabase-js": "^2.43.4",
     "@types/node": "^20.14.2",
-    "@types/node-cron": "^3.0.11",
     "cheerio": "^1.2.0",
     "dotenv": "^16.4.5",
     "googleapis": "^173.0.0",
@@ -24,6 +23,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/node-cron": "^3.0.11",
     "tsx": "^4.15.1"
   }
 }

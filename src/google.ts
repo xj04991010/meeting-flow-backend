@@ -169,6 +169,16 @@ googleCalendarRouter.post('/calendar-intents/sync-batch', async (c) => {
   const body = await c.req.json();
   const userId = body.user_id;
   if (!userId) return c.json({ error: 'user_id is required' }, 400);
+
+  const result = await syncBatchInternal(userId);
+  if ('error' in result) {
+    return c.json(result, result.code === 'NOT_AUTHORIZED' ? 401 : 500);
+  }
+  return c.json(result);
+});
+
+export async function syncBatchInternal(userId: string) {
+  if (!userId) return { error: 'user_id is required', code: 'BAD_REQUEST' };
   
   const { data: intents } = await supabase
     .from('calendar_intents')
@@ -177,7 +187,8 @@ googleCalendarRouter.post('/calendar-intents/sync-batch', async (c) => {
     .eq('sync_status', 'ready')
     .not('start_time', 'is', null);
     
-  if (!intents || intents.length === 0) return c.json({ success: true, synced_count: 0 });
+    
+  if (!intents || intents.length === 0) return { success: true, synced_count: 0 };
   
   // Phase 2: Idempotency (Optimistic Locking)
   const intentIds = intents.map(i => i.id);
@@ -189,7 +200,7 @@ googleCalendarRouter.post('/calendar-intents/sync-batch', async (c) => {
     .select('*');
     
   if (lockError || !lockedIntents || lockedIntents.length === 0) {
-    return c.json({ success: true, synced_count: 0, message: 'Already processing' });
+    return { success: true, synced_count: 0, message: 'Already processing' };
   }
 
   // Helper for Phase 3: Proactive Notification
@@ -214,7 +225,7 @@ googleCalendarRouter.post('/calendar-intents/sync-batch', async (c) => {
   if (!authClient) {
     await supabase.from('calendar_intents').update({ sync_status: 'auth_failed' }).in('id', intentIds);
     await notifyAuthFailure();
-    return c.json({ error: 'Google Calendar not authorized', code: 'NOT_AUTHORIZED' }, 401);
+    return { error: 'Google Calendar not authorized', code: 'NOT_AUTHORIZED' };
   }
   
   const calendar = google.calendar({ version: 'v3', auth: authClient });
@@ -265,5 +276,6 @@ googleCalendarRouter.post('/calendar-intents/sync-batch', async (c) => {
     }
   }
   
-  return c.json({ success: true, synced_count: syncedCount, errors });
-});
+  
+  return { success: true, synced_count: syncedCount, errors };
+}

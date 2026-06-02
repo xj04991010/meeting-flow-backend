@@ -125,4 +125,47 @@ export function startCronJobs() {
       console.error('[CRON] Pre-meeting alert error:', e);
     }
   });
+
+  // 3. Deadline Reminders (Check every minute)
+  const notifiedTasks = new Set<string>();
+  const reminderTemplates = [
+    (title: string) => `🔔 **溫馨提醒**\n\n您的待辦事項【${title}】已經到期啦！\n請記得處理喔！ 🏃‍♂️`,
+    (title: string) => `✨ **貼心提醒**\n\n您的任務【${title}】時間到了！\n趕快去完成它吧，你可以的！ 💪`,
+    (title: string) => `⏰ **任務到期**\n\n【${title}】的死線就在眼前了！\n現在就動手把它消滅吧！ 🔥`
+  ];
+
+  cron.schedule('* * * * *', async () => {
+    try {
+      const now = new Date();
+      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+      const currentIso = now.toISOString();
+
+      const { data: dueTasks } = await supabase.from('tasks')
+        .select('id, user_id, title, deadline')
+        .lte('deadline', currentIso)
+        .gte('deadline', oneHourAgo)
+        .neq('status', 'completed')
+        .neq('status', 'cancelled');
+
+      for (const t of (dueTasks || [])) {
+        if (!notifiedTasks.has(t.id)) {
+          notifiedTasks.add(t.id);
+          const { data: u } = await supabase.from('users').select('telegram_chat_id').eq('id', t.user_id).single();
+          if (u && u.telegram_chat_id) {
+            const template = reminderTemplates[Math.floor(Math.random() * reminderTemplates.length)];
+            const message = template(t.title);
+            
+            const dashboardUrl = `https://mf-dashboard-2026.surge.sh?uid=${t.user_id}`;
+            const buttons = [
+              [{ text: '📅 幫我延到明天', callback_data: `postpone_task_${t.id}` }],
+              [{ text: '✅ 我去 Dashboard 看', url: dashboardUrl }]
+            ];
+            await sendTelegram(Number(u.telegram_chat_id), message, buttons);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Background task cron error:', error);
+    }
+  });
 }

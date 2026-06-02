@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
 import * as crypto from 'crypto';
 import { z } from 'zod';
-import { googleAuthRouter, googleCalendarRouter } from './google';
+import { googleAuthRouter, googleCalendarRouter, syncBatchInternal } from './google';
 import { startCronJobs } from './cron';
 import { generateResearchReport } from './research';
 
@@ -49,6 +49,9 @@ app.use('/api/*', async (c, next) => {
   
   // Dev fallback support
   if (initData.length === 36 && initData.includes('-')) {
+    if (process.env.NODE_ENV !== 'development') {
+      return c.json({ error: 'Unauthorized: Dev token in prod' }, 401);
+    }
     c.set('userId', initData);
     return await next();
   }
@@ -101,6 +104,7 @@ const ExtractedTaskSchema = z.object({
   owner: z.string().nullable().optional(),
   deadline: z.string().nullable().optional(),
   priority: z.enum(['high', 'medium', 'low']).nullable().optional(),
+  category: z.string().nullable().optional(),
   confidence: z.number().nullable().optional(),
   needs_review: z.boolean().nullable().optional(),
   source_quote: z.string().nullable().optional()
@@ -123,6 +127,7 @@ const ParserOutputSchema = z.object({
   reply_message: z.string().nullable().optional(),
   tasks: z.array(ExtractedTaskSchema).nullable().optional(),
   events: z.array(ExtractedEventSchema).nullable().optional(),
+  memories: z.array(z.string()).nullable().optional(),
   unresolved_notes: z.array(z.string().nullable()).nullable().optional()
 });
 type ParserOutput = z.infer<typeof ParserOutputSchema>;
@@ -330,7 +335,7 @@ async function getUserSettings(userId: string): Promise<UserSettings | null> {
   return data as UserSettings;
 }
 
-async function callLLM(userId: string, messages: any[], responseFormat?: any) {
+async function callLLM(userId: string, messages: any[], opts?: { type?: 'text' | 'json_object', temperature?: number }) {
   const settings = await getUserSettings(userId);
   const provider = settings?.ai_provider || 'groq';
   const model = settings?.ai_model || 'llama-3.3-70b-versatile';
@@ -343,8 +348,8 @@ async function callLLM(userId: string, messages: any[], responseFormat?: any) {
   const payload = {
     model,
     messages,
-    temperature: 0.1,
-    ...(responseFormat ? { response_format: responseFormat } : {})
+    temperature: opts?.temperature ?? 0.1,
+    ...(opts?.type ? { response_format: { type: opts.type } } : {})
   };
 
   let endpoint = 'https://api.groq.com/openai/v1/chat/completions';
@@ -439,7 +444,10 @@ function buildBatchContext(batch: { summary?: string | null; raw_text?: string |
   return `${summary}Raw meeting note:\n${clippedRawText}`;
 }
 
-function buildExtractionPrompt(todayStr: string) {
+function buildExtractionPrompt(todayStr: string, customCategories: string[]) {
+  const catsStr = customCategories.length > 0 ? customCategories.join('", "') : '操盤", "教育", "行政", "其他';
+  const catsSchema = customCategories.length > 0 ? customCategories.join(' | ') : '操盤 | 教育 | 行政 | 其他';
+  
   return `You are a world-class AI Executive Assistant. Your job is to extract structured tasks and calendar events from raw, messy, and chaotic conversations (like LINE, WhatsApp, WeChat, or Slack logs).
 Current Datetime (Asia/Taipei): ${todayStr}
 
@@ -452,14 +460,16 @@ Mission:
   1. 📝 Executive Summary (會議總結)
   2. 🗣️ Speaker Notes (發言要點)
   3. ✅ Action Items by Owner (各負責人待辦)
-- MANUAL SECONDARY CONFIRMATION: The user MUST manually review all events and tasks before they are synced to Google Calendar. Therefore, you MUST set "needs_review": true for EVERY SINGLE task and event extracted. Do not auto-approve anything.
+- CONFIRMATION & REVIEW: If the user provides a direct, clear command with a specific date, time, and action item (e.g., "新增明天下午三點的會議"), set "needs_review": false. If the text is messy, ambiguous, or lacks specific time details, set "needs_review": true so the user can verify it.
 - CONVERSATIONAL FALLBACK: If the user is simply chatting, asking a question, or providing non-actionable input (e.g. "你有幾種功能", "你好"), DO NOT hallucinate tasks or events. Output an empty list for tasks and events. In 'reply_message', just provide a natural, helpful, and conversational response (no Fireflies format needed). Only use the Fireflies format when there are actual meeting points or tasks to extract.
 - STRICT CATEGORIZATION:
   * Events (events): Meetings, physical appointments. Must have a time constraint.
   * Tasks (tasks): Deliverables, script writing, video editing, etc.
+- ROLE-BASED CATEGORIZATION (情境標籤): Every task must be assigned to ONE of the following core categories in the "category" field: "${catsStr}".
 - SMART TIME INFERENCE:
   * "明天" (tomorrow) -> infer exact date.
   * "下週" (next week) -> infer next Monday or specific day if mentioned.
+- LONG-TERM MEMORY (長期記憶): If the user mentions personal rules, habits, important relationships, birthdays, or fuzzy recurring needs (e.g. "以後每個月初要結帳", "我爸生日是10月15日", "遇到A客戶要注意合約"), extract them into the "memories" array. 
 - LINK & ASSET RETENTION: Always preserve URLs in the 'source_quote' or 'title'.
 
 Output JSON only:
@@ -472,6 +482,7 @@ Output JSON only:
       "owner": "person responsible or null",
       "deadline": "ISO-8601 datetime with timezone if clear, otherwise null",
       "priority": "high or medium or low",
+      "category": "${catsSchema}",
       "confidence": 0.0,
       "needs_review": true,
       "source_quote": "short quote from the source text"
@@ -489,6 +500,7 @@ Output JSON only:
       "source_quote": "short quote from the source text"
     }
   ],
+  "memories": ["爸媽生日是10月15日", "每個月初要提醒我結帳"],
   "unresolved_notes": ["important ambiguous notes that need dashboard review"]
 }
 
@@ -500,9 +512,14 @@ Rules:
 }
 
 interface IntentOutput {
-  intent: 'extract_meeting' | 'delete_item' | 'query_schedule' | 'chit_chat';
+  intent: 'extract_meeting' | 'supplement' | 'delete_item' | 'query_schedule' | 'update_tasks' | 'chit_chat';
   delete_keyword?: string | null;
   query_timeframe?: string | null;
+  query_category?: string | null;
+  update_action?: 'reschedule' | 'complete' | null;
+  update_target_timeframe?: string | null;
+  update_target_category?: string | null;
+  update_new_deadline_iso?: string | null;
   reply_message?: string | null;
 }
 
@@ -515,23 +532,30 @@ Current Date: ${todayStr}
 Analyze the user's message and determine the intent.
 Output JSON only:
 {
-  "intent": "extract_meeting" | "delete_item" | "query_schedule" | "chit_chat",
-  "delete_keyword": "string or null (Extract ONLY the core noun, e.g., '尼龍神' instead of '明天的尼龍神代辦')",
-  "query_timeframe": "string or null (e.g., '明天', '下週')",
-  "reply_message": "string or null (natural conversational reply if chit_chat)"
+  "intent": "extract_meeting" | "supplement" | "delete_item" | "query_schedule" | "update_tasks" | "chit_chat",
+  "delete_keyword": "string or null (Extract ONLY the core noun)",
+  "query_timeframe": "string or null (e.g., '今天', '下週')",
+  "query_category": "string or null (e.g., '操盤', '行政')",
+  "update_action": "'reschedule' | 'complete' or null",
+  "update_target_timeframe": "string or null (the original time of the tasks to update)",
+  "update_target_category": "string or null (e.g., '行政')",
+  "update_new_deadline_iso": "ISO-8601 string or null (if action is reschedule, parse the new timeframe into an exact ISO string in Asia/Taipei timezone, e.g., '2026-06-03T00:00:00+08:00')",
+  "reply_message": "string or null"
 }
 
 Rules:
-- "extract_meeting": User wants to create, add, or record tasks/events, or provides meeting notes (e.g. "新增任務", "幫我排開會").
-- "delete_item": User wants to delete, cancel, or remove an existing item (e.g. "刪除 報表", "取消會議"). Set "delete_keyword" to the core noun.
-- "query_schedule": User asks what their schedule/tasks are (e.g. "我明天有什麼事", "總結一下待辦"). Set "query_timeframe".
-- "chit_chat": General questions or greetings (e.g. "你有什麼功能", "你好"). Set "reply_message".`;
+- "extract_meeting": User provides NEW meeting notes or creates NEW standalone tasks.
+- "supplement": User wants to ADD or MODIFY something based on the PREVIOUS context.
+- "delete_item": User wants to delete, cancel, or remove an existing item.
+- "query_schedule": User asks what their schedule/tasks are (e.g. "我今天有什麼事", "這週操盤有什麼"). Set query_timeframe and query_category.
+- "update_tasks": User wants to bulk update tasks (e.g. "把今天下午的行政都移到明天", "把今天的任務標記完成"). Set update_action, update_target_timeframe, update_new_deadline_iso.
+- "chit_chat": General questions or greetings. Set "reply_message". You are a highly intelligent, warm, and slightly magical personal assistant. Reply in a helpful, conversational, and caring tone, using emojis.`;
 
   try {
     const content = await callLLM(userId, [
       { role: 'system', content: prompt },
       { role: 'user', content: text }
-    ], { type: 'json_object' });
+    ], { type: 'json_object', temperature: 0.7 });
     const parsed = JSON.parse(content || '{}');
     return {
       intent: parsed.intent || 'extract_meeting',
@@ -548,8 +572,11 @@ async function extractMeetingData(userId: string, text: string): Promise<ParserO
   const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
   let content = '';
   try {
+    const { data: userRow } = await supabase.from('users').select('custom_categories').eq('id', userId).single();
+    const customCategories = userRow?.custom_categories || ['操盤', '教育', '行政', '其他'];
+
     content = await callLLM(userId, [
-      { role: 'system', content: buildExtractionPrompt(todayStr) },
+      { role: 'system', content: buildExtractionPrompt(todayStr, customCategories) },
       { role: 'user', content: text }
     ], { type: 'json_object' });
     
@@ -574,7 +601,9 @@ async function extractMeetingData(userId: string, text: string): Promise<ParserO
   }
 }
 
-function buildSupplementPrompt(todayStr: string, batchContext: string) {
+function buildSupplementPrompt(todayStr: string, batchContext: string, customCategories: string[]) {
+  const catsSchema = customCategories.length > 0 ? customCategories.join(' | ') : '操盤 | 教育 | 行政 | 其他';
+  
   return `You are MeetingFlow's meeting extraction engine. This is a SUPPLEMENT command.
 
 Current time in Asia/Taipei: ${todayStr}
@@ -594,7 +623,19 @@ Mission:
 Output JSON only:
 {
   "reply_message": "short Traditional Chinese confirmation",
-  "tasks": [...],
+  "tasks": [
+    {
+      "title": "specific action item (include context prefix)",
+      "client": "client/project name or null",
+      "owner": "person responsible or null",
+      "deadline": "ISO-8601 datetime with timezone if clear, otherwise null",
+      "priority": "high or medium or low",
+      "category": "${catsSchema}",
+      "confidence": 0.0,
+      "needs_review": true,
+      "source_quote": "short quote from the source text"
+    }
+  ],
   "events": [...],
   "unresolved_notes": []
 }
@@ -602,15 +643,19 @@ Output JSON only:
 Rules:
 - Prefer Traditional Chinese.
 - Keep titles concise but operational.
-- Do not behave like a coach.`;
+- Do not behave like a coach.
+- CONFIRMATION & REVIEW: If the user provides a direct, clear command with a specific date, time, and action item, set "needs_review": false. If ambiguous, set "needs_review": true so the user can verify it.`;
 }
 
 async function extractSupplementData(userId: string, text: string, batchContext: string): Promise<ParserOutput> {
   const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
   let content = '';
   try {
+    const { data: userRow } = await supabase.from('users').select('custom_categories').eq('id', userId).single();
+    const customCategories = userRow?.custom_categories || ['操盤', '教育', '行政', '其他'];
+
     content = await callLLM(userId, [
-      { role: 'system', content: buildSupplementPrompt(todayStr, batchContext) },
+      { role: 'system', content: buildSupplementPrompt(todayStr, batchContext, customCategories) },
       { role: 'user', content: text }
     ], { type: 'json_object' });
     
@@ -677,7 +722,7 @@ async function insertTasks(userId: string, batchId: string | null, tasks: Extrac
       return {
         user_id: userId,
         title: (task.title || '').trim(),
-        category: task.client || 'meeting',
+        category: task.category || '其他',
         status: makeReviewFlag(confidence, task.needs_review) ? 'needs_review' : 'pending',
         deadline: task.deadline || null,
         priority: task.priority || 'medium',
@@ -752,12 +797,27 @@ async function insertEvents(userId: string, batchId: string | null, events: Extr
   return rows.length;
 }
 
-async function persistExtraction(userId: string, rawText: string, result: ParserOutput): Promise<BatchSummary & { taskIds?: string[] }> {
+async function insertMemories(userId: string, memories: string[]) {
+  if (!memories || memories.length === 0) return 0;
+  const rows = memories.filter(hasMeaningfulText).map(content => ({
+    user_id: userId,
+    content: content.trim()
+  }));
+  if (rows.length === 0) return 0;
+  
+  const { error } = await supabase.from('memories').insert(rows);
+  if (error) console.error('insertMemories error', error);
+  return rows.length;
+}
+
+async function persistExtraction(userId: string, rawText: string, result: ParserOutput): Promise<BatchSummary & { taskIds?: string[], memoryCount?: number }> {
   const batchId = await createSourceBatch(userId, rawText, result);
   const tasksResult = await insertTasks(userId, batchId, result.tasks || []);
   const taskIds = Array.isArray(tasksResult) ? tasksResult : [];
   const taskCount = Array.isArray(tasksResult) ? tasksResult.length : (tasksResult as number);
   const eventCount = await insertEvents(userId, batchId, result.events || []);
+  const memoryCount = await insertMemories(userId, result.memories || []);
+  
   const reviewCount = [
     ...(result.tasks || []).map((task) => makeReviewFlag(normalizeConfidence(task.confidence), task.needs_review)),
     ...(result.events || []).map((event) => makeReviewFlag(normalizeConfidence(event.confidence), event.needs_review, hasMeaningfulText(event.start_time)))
@@ -766,13 +826,14 @@ async function persistExtraction(userId: string, rawText: string, result: Parser
     .filter((event) => !makeReviewFlag(normalizeConfidence(event.confidence), event.needs_review, hasMeaningfulText(event.start_time)))
     .length;
 
-  return { batchId, taskCount, eventCount, reviewCount, autoReadyEventCount, taskIds };
+  return { batchId, taskCount, eventCount, reviewCount, autoReadyEventCount, taskIds, memoryCount };
 }
 
-async function persistSupplement(userId: string, existingBatchId: string, result: ParserOutput): Promise<BatchSummary> {
+async function persistSupplement(userId: string, existingBatchId: string, result: ParserOutput): Promise<BatchSummary & { memoryCount?: number }> {
   const tasksResult = await insertTasks(userId, existingBatchId, result.tasks || []);
   const taskCount = Array.isArray(tasksResult) ? tasksResult.length : (tasksResult as number);
   const eventCount = await insertEvents(userId, existingBatchId, result.events || []);
+  const memoryCount = await insertMemories(userId, result.memories || []);
   const reviewCount = [
     ...(result.tasks || []).map((task) => makeReviewFlag(normalizeConfidence(task.confidence), task.needs_review)),
     ...(result.events || []).map((event) => makeReviewFlag(normalizeConfidence(event.confidence), event.needs_review, hasMeaningfulText(event.start_time)))
@@ -781,20 +842,25 @@ async function persistSupplement(userId: string, existingBatchId: string, result
     .filter((event) => !makeReviewFlag(normalizeConfidence(event.confidence), event.needs_review, hasMeaningfulText(event.start_time)))
     .length;
 
-  return { batchId: existingBatchId, taskCount, eventCount, reviewCount, autoReadyEventCount };
+  return { batchId: existingBatchId, taskCount, eventCount, reviewCount, autoReadyEventCount, memoryCount };
 }
 
-function buildTelegramSummary(userId: string, result: ParserOutput, summary: BatchSummary) {
+function buildTelegramSummary(userId: string, result: ParserOutput, summary: BatchSummary & { memoryCount?: number }) {
   // Fireflies.ai style detailed summary is now in reply_message
   const reply = result.reply_message?.trim() || `已成功萃取內容！`;
 
-  if (summary.taskCount === 0 && summary.eventCount === 0) {
+  if (summary.taskCount === 0 && summary.eventCount === 0 && (!summary.memoryCount || summary.memoryCount === 0)) {
     return reply; // Pure conversational response, no footer needed
   }
 
   const lines = [reply, ''];
   lines.push('---');
-  lines.push(`💡 **系統已自動擷取 ${summary.taskCount} 件待辦與 ${summary.eventCount} 個行程**`);
+  
+  let stats = `💡 **系統已自動擷取 ${summary.taskCount} 件待辦與 ${summary.eventCount} 個行程**`;
+  if (summary.memoryCount && summary.memoryCount > 0) {
+    stats += `\n🧠 **助理已自動記住 ${summary.memoryCount} 筆長期記憶/習慣**`;
+  }
+  lines.push(stats);
   lines.push('⚠️ **狀態：等待人工二次確認**');
   lines.push('所有擷取的項目目前皆設為「待審閱」，請點擊下方按鈕前往 Dashboard 進行確認，確認後才會同步至您的 Google 日曆。');
   lines.push('');
@@ -902,6 +968,66 @@ async function processTelegramUpdate(message: any) {
     return;
   }
 
+  if (lowerText === '/memory') {
+    const userId = await getOrCreateUser(chatId);
+    const { data: memories } = await supabase.from('memories').select('content, created_at').eq('user_id', userId).order('created_at', { ascending: false });
+    
+    if (!memories || memories.length === 0) {
+      await sendTelegram(chatId, '🧠 助理目前還沒有記下任何您的長期記憶喔！只要在聊天中跟我說您的習慣或重要日期，我就會記下來！');
+      return;
+    }
+    
+    const memList = memories.map((m, i) => `${i + 1}. ${m.content}`).join('\n');
+    await sendTelegram(chatId, `🧠 **我的記憶庫 (長期記憶)**\n\n${memList}\n\n💡 _這些記憶會在每天早安簡報中自動生效，幫您把關重要時程！_`);
+    return;
+  }
+
+  if (lowerText.startsWith('/addboard ')) {
+    const boardName = text.substring(10).trim();
+    if (!boardName) {
+      await sendTelegram(chatId, '請提供要新增的看板名稱。例如：/addboard 行銷');
+      return;
+    }
+    const userId = await getOrCreateUser(chatId);
+    const { data: userRow } = await supabase.from('users').select('custom_categories').eq('id', userId).single();
+    let categories = userRow?.custom_categories || ['操盤', '教育', '行政', '其他'];
+    if (!categories.includes(boardName)) {
+      categories.push(boardName);
+      await supabase.from('users').update({ custom_categories: categories }).eq('id', userId);
+      await sendTelegram(chatId, `✅ 已成功新增看板：[${boardName}]\n\n網頁重新整理後即可看到新看板。未來指派任務時可以直接說「放到${boardName}看板」。`);
+    } else {
+      await sendTelegram(chatId, `⚠️ 看板 [${boardName}] 已經存在囉！`);
+    }
+    return;
+  }
+
+  if (lowerText.startsWith('/rmboard ')) {
+    const boardName = text.substring(9).trim();
+    if (!boardName) {
+      await sendTelegram(chatId, '請提供要移除的看板名稱。例如：/rmboard 行銷');
+      return;
+    }
+    const userId = await getOrCreateUser(chatId);
+    const { data: userRow } = await supabase.from('users').select('custom_categories').eq('id', userId).single();
+    let categories = userRow?.custom_categories || ['操盤', '教育', '行政', '其他'];
+    if (categories.includes(boardName)) {
+      categories = categories.filter((c: string) => c !== boardName);
+      await supabase.from('users').update({ custom_categories: categories }).eq('id', userId);
+      await sendTelegram(chatId, `✅ 已成功移除看板：[${boardName}]`);
+    } else {
+      await sendTelegram(chatId, `⚠️ 找不到名為 [${boardName}] 的看板。`);
+    }
+    return;
+  }
+
+  if (lowerText === '/boards') {
+    const userId = await getOrCreateUser(chatId);
+    const { data: userRow } = await supabase.from('users').select('custom_categories').eq('id', userId).single();
+    const categories = userRow?.custom_categories || ['操盤', '教育', '行政', '其他'];
+    await sendTelegram(chatId, `📋 **目前的情境看板清單**：\n\n${categories.map((c: string) => `- [${c}]`).join('\n')}\n\n您可以使用 \`/addboard 名稱\` 來新增，或 \`/rmboard 名稱\` 來移除。`);
+    return;
+  }
+
   if (lowerText.startsWith('/research ') || lowerText.startsWith('/read ')) {
     const isUrl = lowerText.startsWith('/read ');
     const query = text.substring(isUrl ? 6 : 10).trim();
@@ -968,18 +1094,108 @@ async function processTelegramUpdate(message: any) {
     }
 
     if (route.intent === 'query_schedule') {
-      const { data: tasks } = await supabase.from('tasks').select('title, status').eq('user_id', userId).neq('status', 'completed').limit(10);
-      if (!tasks || tasks.length === 0) {
-        await editTelegramMessage(chatId as number, thinkingMessageId as number, '您近期沒有任何待辦事項或行程。');
+      const todayStr = new Date().toLocaleString('en-CA', { timeZone: 'Asia/Taipei' }).split(',')[0];
+      const nextWeekStr = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleString('en-CA', { timeZone: 'Asia/Taipei' }).split(',')[0];
+
+      const [{ data: tasks }, { data: events }] = await Promise.all([
+        supabase.from('tasks').select('title, status').eq('user_id', userId).not('status', 'in', '("completed","cancelled")').limit(10),
+        supabase.from('calendar_intents').select('title, start_time').eq('user_id', userId).not('status', 'in', '("rejected","cancelled")').not('start_time', 'is', null).gte('start_time', todayStr).lte('start_time', nextWeekStr).order('start_time', { ascending: true }).limit(10)
+      ]);
+
+      if ((!tasks || tasks.length === 0) && (!events || events.length === 0)) {
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, '您近期沒有任何待辦事項或行程喔！很輕鬆！');
       } else {
-        const list = tasks.map(t => `- ${t.title}`).join('\n');
-        await editTelegramMessage(chatId as number, thinkingMessageId as number, `📅 **為您整理的待辦與行程：**\n\n${list}`);
+        const lines = ['📅 **為您整理的近期行程與待辦：**\n'];
+        if (events && events.length > 0) {
+          lines.push('【即將到來的行程】');
+          events.forEach(e => {
+            const timeStr = new Date(e.start_time).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            lines.push(`• [${timeStr}] ${e.title}`);
+          });
+          lines.push('');
+        }
+        if (tasks && tasks.length > 0) {
+          lines.push('【未完成的待辦】');
+          tasks.forEach(t => lines.push(`• ${t.title}`));
+        }
+        if (route.query_timeframe) {
+          lines.push(`\n*(您詢問的時間範圍：${route.query_timeframe}，以上為近期總覽)*`);
+        }
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, lines.join('\n'));
       }
       return;
     }
 
     if (route.intent === 'chit_chat' && route.reply_message) {
       await editTelegramMessage(chatId as number, thinkingMessageId as number, route.reply_message);
+      return;
+    }
+
+    if (route.intent === 'update_tasks') {
+      const { data: tasks } = await supabase.from('tasks')
+        .select('id, title, deadline, category')
+        .eq('user_id', userId)
+        .neq('status', 'completed')
+        .limit(50);
+        
+      if (!tasks || tasks.length === 0) {
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, `您目前沒有任何未完成的任務可供更新。`);
+        return;
+      }
+
+      const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+      const filterPrompt = `Current Date: ${todayStr}
+The user wants to update tasks: "${text}"
+Here are the user's pending tasks:
+${JSON.stringify(tasks, null, 2)}
+
+Determine which task IDs match the user's request.
+Output JSON only:
+{
+  "task_ids_to_update": ["uuid1", "uuid2"]
+}`;
+      const filterContent = await callLLM(userId, [{ role: 'user', content: filterPrompt }], { type: 'json_object' });
+      const { task_ids_to_update } = JSON.parse(filterContent || '{"task_ids_to_update": []}');
+      
+      if (!task_ids_to_update || task_ids_to_update.length === 0) {
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, `找不到符合條件的任務來進行更新。`);
+        return;
+      }
+
+      if (route.update_action === 'complete') {
+        await supabase.from('tasks').update({ status: 'completed' }).in('id', task_ids_to_update);
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, `✅ 已為您將 ${task_ids_to_update.length} 筆任務標記為完成！`);
+      } else if (route.update_action === 'reschedule' && route.update_new_deadline_iso) {
+        await supabase.from('tasks').update({ deadline: route.update_new_deadline_iso }).in('id', task_ids_to_update);
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, `✅ 已為您將 ${task_ids_to_update.length} 筆任務延期處理！`);
+      } else {
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, `⚠️ 抱歉，我不太確定確切的新時間，請再說一次。`);
+      }
+      return;
+    }
+
+    if (route.intent === 'supplement') {
+      const latestBatch = await getLatestSourceBatch(userId);
+      if (!latestBatch || !latestBatch.raw_text) {
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, '找不到您最近的紀錄可以補充。請直接輸入新的任務或行程。');
+        return;
+      }
+      console.log(`Starting supplement extraction for user=${userId}`);
+      const result = await extractSupplementData(userId, text, latestBatch.raw_text);
+      
+      const newRawText = latestBatch.raw_text + '\n\n[補充指令]: ' + text;
+      const batchSummary = await persistExtraction(userId, newRawText, result);
+      
+      const reply = `✅ **補充成功！**\n\n${buildTelegramSummary(userId, result, batchSummary)}`;
+      
+      let buttons: TelegramButton[][] | undefined = undefined;
+      if (batchSummary.taskCount > 0 || batchSummary.eventCount > 0) {
+        buttons = [
+          [{ text: '✅ 全部確認並同步', callback_data: `sync_batch_${batchSummary.batchId}` }],
+          [{ text: '打開 Dashboard 修改細節', url: getDashboardUrl(userId) }]
+        ];
+      }
+      await editTelegramMessage(chatId as number, thinkingMessageId as number, reply, buttons);
       return;
     }
 
@@ -1109,7 +1325,7 @@ async function handleWeekCommand(chatId: number, userId: string) {
     lines.push('✅ 目前沒有未完成的待辦！');
   }
 
-  lines.push('\n🔗 [打開 Dashboard 排程](http://localhost:5173)');
+  lines.push(`\n🔗 [打開 Dashboard 排程](${getDashboardUrl(userId)})`);
   await editTelegramMessage(chatId, thinkingId, lines.join('\n'));
 }
 
@@ -1191,11 +1407,7 @@ async function handleCallbackQuery(callback: any) {
     const { data: user } = await supabase.from('users').select('id').eq('telegram_chat_id', chatId).maybeSingle();
     if (user) {
        try {
-         await fetch(`http://127.0.0.1:${PORT}/api/calendar-intents/sync-batch`, {
-           method: 'POST',
-           headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify({ user_id: user.id })
-         });
+         await syncBatchInternal(user.id);
        } catch (err) {
          console.error('Internal sync failed', err);
        }
@@ -1296,13 +1508,21 @@ app.get('/api/dashboard/weekly', async (c) => {
   const userId = c.get('userId');
   if (!userId) return c.json({ error: 'Unauthorized' }, 401);
 
-  const { data: user } = await supabase.from('users').select('*').eq('id', userId).single();
-  const { data: tokenData } = await supabase.from('google_tokens').select('id').eq('user_id', userId).maybeSingle();
-  const userWithAuth = user ? { ...user, is_calendar_authorized: !!tokenData } : null;
+  const [
+    { data: user },
+    { data: tokenData },
+    { data: tasks },
+    { data: intents },
+    { data: batches }
+  ] = await Promise.all([
+    supabase.from('users').select('*').eq('id', userId).single(),
+    supabase.from('google_tokens').select('id').eq('user_id', userId).maybeSingle(),
+    supabase.from('tasks').select('*').eq('user_id', userId).neq('status', 'cancelled').order('created_at', { ascending: false }).limit(300),
+    supabase.from('calendar_intents').select('*').eq('user_id', userId).neq('status', 'cancelled').order('created_at', { ascending: false }).limit(300),
+    supabase.from('source_batches').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(5)
+  ]);
 
-  const { data: tasks } = await supabase.from('tasks').select('*').eq('user_id', userId).neq('status', 'cancelled').order('created_at', { ascending: false });
-  const { data: intents } = await supabase.from('calendar_intents').select('*').eq('user_id', userId).neq('status', 'cancelled').order('created_at', { ascending: false });
-  const { data: batches } = await supabase.from('source_batches').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(5);
+  const userWithAuth = user ? { ...user, is_calendar_authorized: !!tokenData } : null;
 
   // 取得基準時間的 YYYY-MM-DD
   const dateQuery = c.req.query('date');
@@ -1386,7 +1606,8 @@ app.patch('/api/tasks/:id/status', async (c) => {
       status: body.status,
       needs_review: body.status === 'needs_review'
     })
-    .eq('id', id);
+    .eq('id', id)
+    .eq('user_id', c.get('userId'));
 
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ ok: true });
@@ -1425,7 +1646,8 @@ app.patch('/api/tasks/:id', async (c) => {
   const { error } = await supabase
     .from('tasks')
     .update(update)
-    .eq('id', id);
+    .eq('id', id)
+    .eq('user_id', c.get('userId'));
 
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ ok: true });
@@ -1441,7 +1663,8 @@ app.patch('/api/calendar-intents/:id/status', async (c) => {
       sync_status: body.sync_status,
       needs_review: body.status === 'needs_review'
     })
-    .eq('id', id);
+    .eq('id', id)
+    .eq('user_id', c.get('userId'));
 
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ ok: true });
@@ -1482,7 +1705,8 @@ app.patch('/api/calendar-intents/:id', async (c) => {
   const { error } = await supabase
     .from('calendar_intents')
     .update(update)
-    .eq('id', id);
+    .eq('id', id)
+    .eq('user_id', c.get('userId'));
 
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ ok: true });
@@ -1527,8 +1751,32 @@ app.post('/api/extract', async (c) => {
     const { raw_text } = await c.req.json();
     if (!raw_text || !userId) return c.json({ error: 'raw_text and userId are required' }, 400);
 
-    const result = await extractMeetingData(userId, raw_text);
-    const summary = await persistExtraction(userId, raw_text, result);
+    const route = await routeIntent(userId, raw_text);
+    if (route.intent === 'delete_item') {
+      return c.json({ error: '偵測到刪除指令。請直接點擊網頁上的「垃圾桶」圖示進行刪除，或透過 Telegram 助理操作。' }, 400);
+    }
+    if (route.intent === 'query_schedule') {
+      return c.json({ error: '偵測到查詢指令。您已經在 Dashboard 上了，可以直接觀看畫面喔！' }, 400);
+    }
+    if (route.intent === 'chit_chat') {
+      return c.json({ error: route.reply_message || '請輸入會議紀錄或待辦事項。閒聊請找 Telegram 助理！' }, 400);
+    }
+
+    let result;
+    let newRawText = raw_text;
+    if (route.intent === 'supplement') {
+      const latestBatch = await getLatestSourceBatch(userId);
+      if (latestBatch && latestBatch.raw_text) {
+        result = await extractSupplementData(userId, raw_text, latestBatch.raw_text);
+        newRawText = latestBatch.raw_text + '\n\n[補充指令]: ' + raw_text;
+      } else {
+        result = await extractMeetingData(userId, raw_text);
+      }
+    } else {
+      result = await extractMeetingData(userId, raw_text);
+    }
+    
+    const summary = await persistExtraction(userId, newRawText, result);
 
     return c.json({ ok: true, result, summary });
   } catch (error: any) {
@@ -1561,89 +1809,98 @@ app.route('/api', googleCalendarRouter);
 
 requireEnv();
 
+const cron = require('node-cron');
+
+function setupCronJobs() {
+  // Daily Briefing at 09:00 AM (Taipei Time)
+  cron.schedule('0 9 * * *', async () => {
+    console.log('[Cron] Running Daily Briefing...');
+    try {
+      const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
+      if (!users) return;
+
+      const todayStr = new Date().toLocaleString('en-CA', { timeZone: 'Asia/Taipei' }).split(',')[0];
+      
+      for (const user of users) {
+        const [tasksResult, eventsResult, memoriesResult, rawFact] = await Promise.all([
+          supabase.from('tasks').select('title, category, priority').eq('user_id', user.id).neq('status', 'completed'),
+          supabase.from('calendar_intents').select('title, start_time').eq('user_id', user.id).neq('status', 'cancelled').not('start_time', 'is', null).gte('start_time', todayStr).lt('start_time', todayStr + 'T23:59:59'),
+          supabase.from('memories').select('content').eq('user_id', user.id),
+          fetch('https://uselessfacts.jsph.pl/api/v2/facts/random').then(r => r.json()).then((d: any) => d.text).catch(() => '')
+        ]);
+        
+        const tasks = tasksResult.data;
+        const events = eventsResult.data;
+        const memories = memoriesResult.data;
+
+        if ((!tasks || tasks.length === 0) && (!events || events.length === 0) && (!memories || memories.length === 0)) continue;
+
+        const prompt = `You are a top-tier Executive Assistant. Your persona is "龜毛、嚴謹、會盯進度，但又非常關心老闆" (super strict, meticulous, nagging but caring).
+It's 9:00 AM on ${todayStr}. Summarize today's agenda for the user.
+Events today: ${JSON.stringify(events || [])}
+Pending tasks: ${JSON.stringify(tasks || [])}
+User's Long-Term Memories & Goals: ${JSON.stringify(memories || [])}
+Raw Internet Fun Fact: "${rawFact}"
+
+Rules:
+1. Tone: Strict but caring. Don't let the user slack off. Use Traditional Chinese and emojis.
+2. Contextual Reminders: CRITICAL! Read the User's Long-Term Memories. If there are birthdays, anniversaries, or recurring events relevant to today or this month, remind the user proactively.
+3. Micro-Tasking (碎片化安插): Analyze today's Events. If there is a noticeable gap of free time (e.g., no events for 2 hours in the afternoon), AND the user has a long-term goal in their Memories (e.g., "讀書", "寫作"), you MUST nag them to use that gap to work on their goal! ("老闆，下午2點到4點有空檔，不要想偷懶，請撥出30分鐘推進您的寫作目標！")
+4. Fun Fact (冷知識): At the VERY END of the briefing, translate the "Raw Internet Fun Fact" (if provided) into Traditional Chinese, and present it in a fun, mind-blowing UberFacts style to start the user's day with a smile. Format it as: "💡 順帶一提老闆，您知道嗎？[fun fact]"`;
+
+        const reply = await callLLM(user.id, [{ role: 'user', content: prompt }]);
+        if (reply) {
+          await sendTelegram(user.telegram_chat_id, `🌅 **[晨間簡報]**\n\n${reply}`);
+        }
+      }
+    } catch (e) {
+      console.error('[Cron] Daily Briefing error:', e);
+    }
+  }, { timezone: 'Asia/Taipei' });
+
+  // Deadline Nudging at 15:00 (Taipei Time)
+  cron.schedule('0 15 * * *', async () => {
+    console.log('[Cron] Running Deadline Nudging...');
+    try {
+      const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
+      if (!users) return;
+
+      const todayStr = new Date().toLocaleString('en-CA', { timeZone: 'Asia/Taipei' }).split(',')[0];
+      
+      for (const user of users) {
+        // Find high priority tasks due today that are still pending
+        const { data: tasks } = await supabase.from('tasks')
+          .select('id, title, category')
+          .eq('user_id', user.id)
+          .neq('status', 'completed')
+          .eq('priority', 'high')
+          .gte('deadline', todayStr)
+          .lt('deadline', todayStr + 'T23:59:59');
+
+        if (!tasks || tasks.length === 0) continue;
+
+        const prompt = `You are a top-tier Executive Assistant. Your persona is "龜毛、嚴謹、會盯進度，但又非常關心老闆" (super strict, meticulous, nagging but caring).
+It's 3:00 PM. The user has HIGH PRIORITY tasks due today that are NOT YET COMPLETED:
+${JSON.stringify(tasks)}
+
+Write a very short, nagging, strict but caring message checking on their progress.
+Make them feel a bit of pressure so they don't procrastinate, but remind them you are here to help if they need to postpone.
+Use Traditional Chinese and emojis.`;
+
+        const reply = await callLLM(user.id, [{ role: 'user', content: prompt }]);
+        if (reply) {
+          await sendTelegram(user.telegram_chat_id, `🚨 **[進度追蹤]**\n\n${reply}`);
+        }
+      }
+    } catch (e) {
+      console.error('[Cron] Deadline Nudging error:', e);
+    }
+  }, { timezone: 'Asia/Taipei' });
+}
+
 console.log(`MeetingFlow backend is running on port ${PORT}`);
 
-// --- Background Cron Daemon (Push Notifications) ---
-const notifiedTasks = new Set<string>();
-let lastDigestMarker = '';
-
-setInterval(async () => {
-  try {
-    const now = new Date();
-    const taipeiTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
-    const todayStr = taipeiTime.getFullYear() + '-' + String(taipeiTime.getMonth() + 1).padStart(2, '0') + '-' + String(taipeiTime.getDate()).padStart(2, '0');
-    const currentHour = taipeiTime.getHours();
-    
-    // 1. Daily Digest (Morning 09:00, Evening 21:00)
-    const digestKey = currentHour === 9 ? 'morning' : currentHour === 21 ? 'evening' : null;
-    const marker = `${todayStr}_${digestKey}`;
-
-    if (digestKey && lastDigestMarker !== marker) {
-      lastDigestMarker = marker;
-      const { data: users } = await supabase.from('users').select('id, telegram_chat_id');
-      for (const u of (users || [])) {
-        if (!u.telegram_chat_id) continue;
-        const { data: pendingTasks } = await supabase.from('tasks')
-          .select('title, deadline')
-          .eq('user_id', u.id)
-          .neq('status', 'completed')
-          .neq('status', 'cancelled');
-        
-        if (pendingTasks && pendingTasks.length > 0) {
-          const greeting = digestKey === 'morning' ? '🌅 早安！' : '🌙 晚安！今日總結：';
-          let msg = `${greeting} 您的助理來追殺您了！\n\n目前您有 ${pendingTasks.length} 件尚未完成的待辦：\n`;
-          pendingTasks.slice(0, 10).forEach(t => {
-            msg += `• ${t.title || '任務'}\n`;
-          });
-          if (pendingTasks.length > 10) msg += `...及其他 ${pendingTasks.length - 10} 件任務。\n`;
-          msg += '\n請記得盡快處理喔！趕快打開 Dashboard 把卡片打勾吧！';
-          await sendTelegram(Number(u.telegram_chat_id), msg, [[{ text: '打開 Dashboard', url: getDashboardUrl(u.id) }]]);
-        }
-      }
-    }
-
-    // 2. Deadline Reminders (Check every minute)
-    // Find tasks where deadline <= now and deadline > now - 1 hour
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
-    const currentIso = now.toISOString();
-
-    const { data: dueTasks } = await supabase.from('tasks')
-      .select('id, user_id, title, deadline')
-      .lte('deadline', currentIso)
-      .gte('deadline', oneHourAgo)
-      .neq('status', 'completed')
-      .neq('status', 'cancelled');
-
-    for (const t of (dueTasks || [])) {
-      if (!notifiedTasks.has(t.id)) {
-        notifiedTasks.add(t.id);
-        const { data: u } = await supabase.from('users').select('telegram_chat_id').eq('id', t.user_id).single();
-        if (u && u.telegram_chat_id) {
-          // Generate empathetic message
-          let message = `🔔 **溫馨提醒**\n\n您的待辦事項【${t.title}】已經到期啦！\n請記得處理喔！`;
-          try {
-            const prompt = `使用者有一個待辦任務「${t.title}」剛到期。請用語氣溫暖、貼心的口吻提醒他，字數限制 40 字以內，可以附帶一兩個 emoji。`;
-            const aiResponse = await callLLM(t.user_id, [{ role: 'user', content: prompt }], { type: 'text' });
-            if (aiResponse) {
-              message = `🔮 **貼心提醒**\n\n${aiResponse}`;
-            }
-          } catch (e) {
-            console.error('Failed to generate empathetic message', e);
-          }
-
-          const buttons = [
-            [{ text: '📅 幫我延到明天', callback_data: `postpone_task_${t.id}` }],
-            [{ text: '✅ 我去 Dashboard 看', url: getDashboardUrl(t.user_id) }]
-          ];
-          await sendTelegram(Number(u.telegram_chat_id), message, buttons);
-        }
-      }
-    }
-
-  } catch (error) {
-    console.error('Background cron error:', error);
-  }
-}, 60000);
+setupCronJobs();
 
 serve({
   fetch: app.fetch,
