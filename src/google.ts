@@ -166,30 +166,67 @@ googleCalendarRouter.post('/calendar-intents/:id/sync', async (c) => {
 
 // POST /api/calendar-intents/sync-batch
 googleCalendarRouter.post('/calendar-intents/sync-batch', async (c) => {
-  // Extract user_id from body or auth context (assuming passed in body for simplicity now)
   const body = await c.req.json();
   const userId = body.user_id;
   if (!userId) return c.json({ error: 'user_id is required' }, 400);
   
   const { data: intents } = await supabase
     .from('calendar_intents')
-    .select('*')
+    .select('id')
     .eq('user_id', userId)
     .eq('sync_status', 'ready')
     .not('start_time', 'is', null);
     
   if (!intents || intents.length === 0) return c.json({ success: true, synced_count: 0 });
   
+  // Phase 2: Idempotency (Optimistic Locking)
+  const intentIds = intents.map(i => i.id);
+  const { data: lockedIntents, error: lockError } = await supabase
+    .from('calendar_intents')
+    .update({ sync_status: 'processing' })
+    .in('id', intentIds)
+    .eq('sync_status', 'ready')
+    .select('*');
+    
+  if (lockError || !lockedIntents || lockedIntents.length === 0) {
+    return c.json({ success: true, synced_count: 0, message: 'Already processing' });
+  }
+
+  // Helper for Phase 3: Proactive Notification
+  const notifyAuthFailure = async () => {
+    try {
+      const { data: user } = await supabase.from('users').select('telegram_chat_id').eq('id', userId).single();
+      if (user && user.telegram_chat_id) {
+        const url = `https://mf-dashboard-2026.surge.sh?uid=${userId}`;
+        const replyMarkup = { inline_keyboard: [[{ text: '重新綁定 Google', url: url }]] };
+        await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: user.telegram_chat_id, text: '⚠️ 您的 Google 日曆授權已失效或過期，請點擊下方按鈕前往 Dashboard 重新綁定！', reply_markup: replyMarkup })
+        });
+      }
+    } catch (e) {
+      console.error('Failed to notify', e);
+    }
+  };
+  
   const authClient = await getGoogleAuthClient(userId);
-  if (!authClient) return c.json({ error: 'Google Calendar not authorized', code: 'NOT_AUTHORIZED' }, 401);
+  if (!authClient) {
+    await supabase.from('calendar_intents').update({ sync_status: 'auth_failed' }).in('id', intentIds);
+    await notifyAuthFailure();
+    return c.json({ error: 'Google Calendar not authorized', code: 'NOT_AUTHORIZED' }, 401);
+  }
   
   const calendar = google.calendar({ version: 'v3', auth: authClient });
   
   let syncedCount = 0;
   const errors = [];
   
-  for (const intent of intents) {
-    if (intent.needs_review) continue; // Skip items needing review based on spec
+  for (const intent of lockedIntents) {
+    if (intent.needs_review) {
+      await supabase.from('calendar_intents').update({ sync_status: 'pending_review' }).eq('id', intent.id);
+      continue;
+    }
     
     try {
       const eventParams: any = {
@@ -215,7 +252,16 @@ googleCalendarRouter.post('/calendar-intents/sync-batch', async (c) => {
     } catch (e: any) {
       console.error('Batch sync error for intent', intent.id, e);
       errors.push({ id: intent.id, error: e.message });
-      await supabase.from('calendar_intents').update({ sync_status: 'failed' }).eq('id', intent.id);
+      
+      const errStr = e.message || '';
+      if (errStr.includes('invalid_grant') || errStr.includes('Unauthorized') || e.code === 401) {
+        await supabase.from('calendar_intents').update({ sync_status: 'auth_failed' }).eq('id', intent.id);
+        await notifyAuthFailure();
+        // Break out of loop since auth is totally dead
+        break;
+      } else {
+        await supabase.from('calendar_intents').update({ sync_status: 'failed' }).eq('id', intent.id);
+      }
     }
   }
   

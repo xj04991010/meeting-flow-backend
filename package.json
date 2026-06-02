@@ -17,7 +17,8 @@
     "groq-sdk": "^1.2.1",
     "hono": "^4.4.6",
     "node-cron": "^4.2.1",
-    "pg": "^8.21.0"
+    "pg": "^8.21.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20.14.2",

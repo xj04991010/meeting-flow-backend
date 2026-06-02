@@ -4,6 +4,7 @@ import { cors } from 'hono/cors';
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
 import * as crypto from 'crypto';
+import { z } from 'zod';
 import { googleAuthRouter, googleCalendarRouter } from './google';
 import { startCronJobs } from './cron';
 import { generateResearchReport } from './research';
@@ -20,7 +21,10 @@ const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
-const DASHBOARD_URL = 'https://mf-dashboard-2026.surge.sh';
+const DASHBOARD_BASE_URL = 'https://mf-dashboard-2026.surge.sh';
+function getDashboardUrl(uid?: string) {
+  return uid ? `${DASHBOARD_BASE_URL}?uid=${uid}` : DASHBOARD_BASE_URL;
+}
 const PORT = Number(process.env.PORT || 3000);
 const PARSER_VERSION = 'meeting-extract-v2';
 const GROQ_TIMEOUT_MS = 90_000;
@@ -91,34 +95,37 @@ type TelegramButton = {
   web_app?: { url: string };
 };
 
-type ExtractedTask = {
-  title: string;
-  client?: string | null;
-  owner?: string | null;
-  deadline?: string | null;
-  priority?: 'high' | 'normal' | 'low';
-  confidence?: number | null;
-  needs_review?: boolean | null;
-  source_quote?: string | null;
-};
+const ExtractedTaskSchema = z.object({
+  title: z.string(),
+  client: z.string().nullable().optional(),
+  owner: z.string().nullable().optional(),
+  deadline: z.string().nullable().optional(),
+  priority: z.enum(['high', 'normal', 'low']).optional(),
+  confidence: z.number().nullable().optional(),
+  needs_review: z.boolean().nullable().optional(),
+  source_quote: z.string().nullable().optional()
+});
+type ExtractedTask = z.infer<typeof ExtractedTaskSchema>;
 
-type ExtractedEvent = {
-  title: string;
-  client?: string | null;
-  start_time?: string | null;
-  end_time?: string | null;
-  location?: string | null;
-  confidence?: number | null;
-  needs_review?: boolean | null;
-  source_quote?: string | null;
-};
+const ExtractedEventSchema = z.object({
+  title: z.string(),
+  client: z.string().nullable().optional(),
+  start_time: z.string().nullable().optional(),
+  end_time: z.string().nullable().optional(),
+  location: z.string().nullable().optional(),
+  confidence: z.number().nullable().optional(),
+  needs_review: z.boolean().nullable().optional(),
+  source_quote: z.string().nullable().optional()
+});
+type ExtractedEvent = z.infer<typeof ExtractedEventSchema>;
 
-type ParserOutput = {
-  reply_message?: string;
-  tasks?: ExtractedTask[];
-  events?: ExtractedEvent[];
-  unresolved_notes?: string[];
-};
+const ParserOutputSchema = z.object({
+  reply_message: z.string().optional(),
+  tasks: z.array(ExtractedTaskSchema).optional(),
+  events: z.array(ExtractedEventSchema).optional(),
+  unresolved_notes: z.array(z.string()).optional()
+});
+type ParserOutput = z.infer<typeof ParserOutputSchema>;
 
 type BatchSummary = {
   batchId: string | null;
@@ -539,18 +546,31 @@ Rules:
 
 async function extractMeetingData(userId: string, text: string): Promise<ParserOutput> {
   const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
-  const content = await callLLM(userId, [
-    { role: 'system', content: buildExtractionPrompt(todayStr) },
-    { role: 'user', content: text }
-  ], { type: 'json_object' });
-
-  const parsed = JSON.parse(content || '{}') as ParserOutput;
-  return {
-    reply_message: parsed.reply_message || '',
-    tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
-    events: Array.isArray(parsed.events) ? parsed.events : [],
-    unresolved_notes: Array.isArray(parsed.unresolved_notes) ? parsed.unresolved_notes : []
-  };
+  let content = '';
+  try {
+    content = await callLLM(userId, [
+      { role: 'system', content: buildExtractionPrompt(todayStr) },
+      { role: 'user', content: text }
+    ], { type: 'json_object' });
+    
+    const rawJSON = JSON.parse(content || '{}');
+    const result = ParserOutputSchema.safeParse(rawJSON);
+    
+    if (result.success) {
+      return {
+        reply_message: result.data.reply_message || '',
+        tasks: result.data.tasks || [],
+        events: result.data.events || [],
+        unresolved_notes: result.data.unresolved_notes || []
+      };
+    } else {
+      console.error('Zod schema validation failed for extractMeetingData:', result.error);
+      return { reply_message: 'AI 輸出格式異常，已啟用安全回退機制。', tasks: [], events: [], unresolved_notes: [] };
+    }
+  } catch (err) {
+    console.error('Failed to parse LLM output:', err, 'Content:', content);
+    return { reply_message: '解析失敗，請稍後再試。', tasks: [], events: [], unresolved_notes: [] };
+  }
 }
 
 function buildSupplementPrompt(todayStr: string, batchContext: string) {
@@ -586,18 +606,31 @@ Rules:
 
 async function extractSupplementData(userId: string, text: string, batchContext: string): Promise<ParserOutput> {
   const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
-  const content = await callLLM(userId, [
-    { role: 'system', content: buildSupplementPrompt(todayStr, batchContext) },
-    { role: 'user', content: text }
-  ], { type: 'json_object' });
-
-  const parsed = JSON.parse(content || '{}') as ParserOutput;
-  return {
-    reply_message: parsed.reply_message || '',
-    tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
-    events: Array.isArray(parsed.events) ? parsed.events : [],
-    unresolved_notes: Array.isArray(parsed.unresolved_notes) ? parsed.unresolved_notes : []
-  };
+  let content = '';
+  try {
+    content = await callLLM(userId, [
+      { role: 'system', content: buildSupplementPrompt(todayStr, batchContext) },
+      { role: 'user', content: text }
+    ], { type: 'json_object' });
+    
+    const rawJSON = JSON.parse(content || '{}');
+    const result = ParserOutputSchema.safeParse(rawJSON);
+    
+    if (result.success) {
+      return {
+        reply_message: result.data.reply_message || '',
+        tasks: result.data.tasks || [],
+        events: result.data.events || [],
+        unresolved_notes: result.data.unresolved_notes || []
+      };
+    } else {
+      console.error('Zod schema validation failed for extractSupplementData:', result.error);
+      return { reply_message: 'AI 輸出格式異常，已啟用安全回退機制。', tasks: [], events: [], unresolved_notes: [] };
+    }
+  } catch (err) {
+    console.error('Failed to parse LLM output in supplement:', err, 'Content:', content);
+    return { reply_message: '解析失敗，請稍後再試。', tasks: [], events: [], unresolved_notes: [] };
+  }
 }
 
 async function createSourceBatch(userId: string, rawText: string, result: ParserOutput): Promise<string | null> {
@@ -749,7 +782,7 @@ async function persistSupplement(userId: string, existingBatchId: string, result
   return { batchId: existingBatchId, taskCount, eventCount, reviewCount, autoReadyEventCount };
 }
 
-function buildTelegramSummary(result: ParserOutput, summary: BatchSummary) {
+function buildTelegramSummary(userId: string, result: ParserOutput, summary: BatchSummary) {
   // Fireflies.ai style detailed summary is now in reply_message
   const reply = result.reply_message?.trim() || `已成功萃取內容！`;
 
@@ -763,8 +796,7 @@ function buildTelegramSummary(result: ParserOutput, summary: BatchSummary) {
   lines.push('⚠️ **狀態：等待人工二次確認**');
   lines.push('所有擷取的項目目前皆設為「待審閱」，請點擊下方按鈕前往 Dashboard 進行確認，確認後才會同步至您的 Google 日曆。');
   lines.push('');
-  // 使用正式的 Surge 網址
-  lines.push('🔗 [點此開啟 Dashboard 進行二次確認](https://mf-dashboard-2026.surge.sh)');
+  lines.push(`🔗 [點此開啟 Dashboard 進行二次確認](${getDashboardUrl(userId)})`);
   return lines.join('\n');
 }
 
@@ -798,7 +830,7 @@ async function processTelegramUpdate(message: any) {
   if (lowerText === '/start') {
     const userId = await getOrCreateUser(chatId);
     const reply = 'MeetingFlow 已切回會議萃取模式。直接貼上會議紀錄，我會批次抽出待辦、行程與待確認項目。';
-    await sendTelegram(chatId, reply, [[{ text: '打開 Dashboard', url: DASHBOARD_URL }]]);
+    await sendTelegram(chatId, reply, [[{ text: '打開 Dashboard', url: getDashboardUrl(userId) }]]);
     return;
   }
 
@@ -823,7 +855,7 @@ async function processTelegramUpdate(message: any) {
   if (looksLikeDashboardCommand(text)) {
     const userId = await getOrCreateUser(chatId);
     const reply = '打開 Dashboard 查看所有批次、待辦與行程。';
-    await sendTelegram(chatId, reply, [[{ text: '打開 Dashboard', url: DASHBOARD_URL }]]);
+    await sendTelegram(chatId, reply, [[{ text: '打開 Dashboard', url: getDashboardUrl(userId) }]]);
     return;
   }
 
@@ -902,8 +934,8 @@ async function processTelegramUpdate(message: any) {
 
     const seconds = Math.round((Date.now() - startedAt) / 1000);
     const reply = isShort 
-      ? buildTelegramSummary(result, batchSummary) 
-      : `${buildTelegramSummary(result, batchSummary)}\n\n⏱️ 耗時：約 ${seconds} 秒`;
+      ? buildTelegramSummary(userId, result, batchSummary) 
+      : `${buildTelegramSummary(userId, result, batchSummary)}\n\n⏱️ 耗時：約 ${seconds} 秒`;
 
     let buttons: TelegramButton[][] | undefined = undefined;
     const taskIds = batchSummary.taskIds as string[];
@@ -916,7 +948,7 @@ async function processTelegramUpdate(message: any) {
     } else if (batchSummary.taskCount > 0 || batchSummary.eventCount > 0) {
       buttons = [
         [{ text: '✅ 全部確認並同步', callback_data: `sync_batch_${batchSummary.batchId}` }],
-        [{ text: '打開 Dashboard 修改細節', url: DASHBOARD_URL }]
+        [{ text: '打開 Dashboard 修改細節', url: getDashboardUrl(userId) }]
       ];
     }
 
@@ -963,7 +995,7 @@ async function handleResearchCommand(chatId: number, userId: string, query: stri
         status: 'completed'
       }).eq('id', doc.id);
 
-      await editTelegramMessage(chatId, thinkingMessageId as number, `✅ 深度研究完成！已將報告加入您的 Dashboard：\n\n📌 **${title}**\n\n[打開 Dashboard 閱讀](${DASHBOARD_URL})`);
+      await editTelegramMessage(chatId, thinkingMessageId as number, `✅ 深度研究完成！已將報告加入您的 Dashboard：\n\n📌 **${title}**\n\n[打開 Dashboard 閱讀](${getDashboardUrl(userId)})`);
     } catch (e: any) {
       console.error('Deep research failed:', e);
       await supabase.from('research_documents').update({
@@ -1061,7 +1093,7 @@ async function handleCallbackQuery(callback: any) {
       await answerCallbackQuery(callback.id, `已設定提醒：${displayTime}`);
       
       const newText = originalText + `\n\n✅ 已設定推播提醒：${displayTime}`;
-      await editTelegramMessage(chatId, messageId, newText, [[{ text: '打開 Dashboard 修改', url: DASHBOARD_URL }]]);
+      await editTelegramMessage(chatId, messageId, newText, [[{ text: '打開 Dashboard 修改', url: getDashboardUrl() }]]);
     } else {
       await answerCallbackQuery(callback.id, '設定失敗，請稍後再試。');
     }
@@ -1097,7 +1129,7 @@ async function handleCallbackQuery(callback: any) {
       .replace('⚠️ **狀態：等待人工二次確認**', '✅ **狀態：已全部授權同步**')
       .replace('所有擷取的項目目前皆設為「待審閱」，請點擊下方按鈕前往 Dashboard 進行確認，確認後才會同步至您的 Google 日曆。', '所有行程已排入同步佇列！');
       
-    await editTelegramMessage(chatId, messageId, newText, [[{ text: '打開 Dashboard 修改細節', url: DASHBOARD_URL }]]);
+    await editTelegramMessage(chatId, messageId, newText, [[{ text: '打開 Dashboard 修改細節', url: getDashboardUrl() }]]);
     return;
   }
 
@@ -1150,7 +1182,7 @@ async function handleCallbackQuery(callback: any) {
     chatId,
     messageId,
     '舊版逐條確認按鈕已停用。請到 Dashboard 檢查與修改批次結果。',
-    [[{ text: '打開 Dashboard', web_app: { url: DASHBOARD_URL } }]]
+    [[{ text: '打開 Dashboard', web_app: { url: getDashboardUrl() } }]]
   );
 }
 
@@ -1486,7 +1518,7 @@ setInterval(async () => {
           });
           if (pendingTasks.length > 10) msg += `...及其他 ${pendingTasks.length - 10} 件任務。\n`;
           msg += '\n請記得盡快處理喔！趕快打開 Dashboard 把卡片打勾吧！';
-          await sendTelegram(Number(u.telegram_chat_id), msg, [[{ text: '打開 Dashboard', url: DASHBOARD_URL }]]);
+          await sendTelegram(Number(u.telegram_chat_id), msg, [[{ text: '打開 Dashboard', url: getDashboardUrl(u.id) }]]);
         }
       }
     }
@@ -1508,7 +1540,7 @@ setInterval(async () => {
         notifiedTasks.add(t.id);
         const { data: u } = await supabase.from('users').select('telegram_chat_id').eq('id', t.user_id).single();
         if (u && u.telegram_chat_id) {
-          await sendTelegram(Number(u.telegram_chat_id), `🔔 **溫馨提醒**\n\n您的待辦事項【${t.title}】已經到期啦！\n請記得處理喔！`, [[{ text: '去 Dashboard 確認', url: DASHBOARD_URL }]]);
+          await sendTelegram(Number(u.telegram_chat_id), `🔔 **溫馨提醒**\n\n您的待辦事項【${t.title}】已經到期啦！\n請記得處理喔！`, [[{ text: '去 Dashboard 確認', url: getDashboardUrl(t.user_id) }]]);
         }
       }
     }
