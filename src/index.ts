@@ -864,6 +864,12 @@ async function processTelegramUpdate(message: any) {
         const buttons: TelegramButton[][] = tasks.map(t => [
           { text: `🗑️ 刪除: ${t.title}`, callback_data: `delete_task_${t.id}` }
         ]);
+        
+        if (tasks.length > 1) {
+          const shortKw = route.delete_keyword.substring(0, 15);
+          buttons.push([{ text: `⚠️ 一次刪除全部 (${tasks.length} 筆)`, callback_data: `del_all_kw_${shortKw}` }]);
+        }
+        
         buttons.push([{ text: '❌ 取消', callback_data: `cancel_delete` }]);
         
         await editTelegramMessage(chatId as number, thinkingMessageId as number, replyText, buttons);
@@ -1092,6 +1098,27 @@ async function handleCallbackQuery(callback: any) {
       .replace('所有擷取的項目目前皆設為「待審閱」，請點擊下方按鈕前往 Dashboard 進行確認，確認後才會同步至您的 Google 日曆。', '所有行程已排入同步佇列！');
       
     await editTelegramMessage(chatId, messageId, newText, [[{ text: '打開 Dashboard 修改細節', url: DASHBOARD_URL }]]);
+    return;
+  }
+
+  if (data && data.startsWith('del_all_kw_')) {
+    const keyword = data.replace('del_all_kw_', '');
+    const { data: user } = await supabase.from('users').select('id').eq('telegram_chat_id', chatId).maybeSingle();
+    
+    if (user) {
+      const { data: tasks } = await supabase.from('tasks').select('id, title').eq('user_id', user.id).ilike('title', `%${keyword}%`).limit(5);
+      if (tasks && tasks.length > 0) {
+        const ids = tasks.map(t => t.id);
+        await supabase.from('tasks').delete().in('id', ids);
+        await answerCallbackQuery(callback.id, `✅ 已為您刪除 ${tasks.length} 筆任務！`);
+        
+        const titles = tasks.map(t => `- ${t.title}`).join('\n');
+        await editTelegramMessage(chatId, messageId, `✅ **已成功批次刪除以下任務：**\n\n${titles}`);
+      } else {
+        await answerCallbackQuery(callback.id, `找不到任務。`);
+        await editTelegramMessage(chatId, messageId, `❌ 找不到相關任務，可能已被刪除。`);
+      }
+    }
     return;
   }
 
