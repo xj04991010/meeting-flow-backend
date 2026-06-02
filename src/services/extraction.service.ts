@@ -1,12 +1,20 @@
-import { callLLM } from './llm.service';
+import { callLLM, transcribeAudio } from './llm.service';
 import { AiExtractionSchema, AiExtractionOutput } from '../schemas/ai-output.schema';
 import { insertAiCandidates } from '../repositories/ai-candidates.repo';
 import { supabase } from '../utils/db';
-import { sendTelegram, editTelegramMessage } from './telegram.service';
+import { sendTelegram, editTelegramMessage, getTelegramFileBuffer } from './telegram.service';
 import { updateSourceBatchSummary } from '../repositories/source-batches.repo';
 
 export async function processExtractionJob(userId: string, chatId: number, text: string, batchId: string, voiceFileId?: string | null) {
   try {
+    let inputText = text;
+    if (voiceFileId) {
+      await sendTelegram(chatId, '🎙️ 收到語音，正在轉錄...');
+      const audioBuffer = await getTelegramFileBuffer(voiceFileId);
+      inputText = await transcribeAudio(audioBuffer, 'voice.ogg');
+      await sendTelegram(chatId, `📝 語音轉錄內容：\n${inputText}`);
+    }
+
     const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
     
     // 1. Fetch user context & memories
@@ -44,7 +52,7 @@ Output strictly valid JSON matching this schema:
     // 3. Call LLM
     const content = await callLLM(userId, [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: text }
+      { role: 'user', content: inputText }
     ], { type: 'json_object', temperature: 0.2 });
 
     if (!content) throw new Error('LLM returned empty response.');
@@ -77,7 +85,7 @@ Output strictly valid JSON matching this schema:
 
     // 6. Stage Candidates (Preview Mode)
     const candidatesCount = await insertAiCandidates(userId, batchId, output);
-    await updateSourceBatchSummary(batchId, output.reasoning_summary);
+    await updateSourceBatchSummary(batchId, output.reasoning_summary, output);
 
     if (candidatesCount === 0) {
       await sendTelegram(chatId, `無任何需確認的任務或記憶。\n\n${output.reasoning_summary}`);

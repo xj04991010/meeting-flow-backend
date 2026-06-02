@@ -47,6 +47,16 @@ telegramRoute.post('/webhook', async (c) => {
       const text = message.text?.trim() || '';
 
       if (chatId) {
+        const lowerText = text.toLowerCase();
+        
+        // Command Routing (A-8)
+        if (lowerText.startsWith('/')) {
+          // Import dynamically to avoid top-level circular dependency if any
+          const { processTelegramUpdate } = await import('../index');
+          processTelegramUpdate(message).catch((e: any) => console.error('Command routing error:', e));
+          return c.text('OK');
+        }
+
         const userId = await getOrCreateUser(chatId);
         
         // 2. Fast ACK / Thinking message

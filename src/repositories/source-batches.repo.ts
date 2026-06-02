@@ -21,9 +21,27 @@ export async function createSourceBatch(userId: string, rawText: string): Promis
   return data.id;
 }
 
-export async function updateSourceBatchSummary(batchId: string, aiSummary: string) {
+export async function updateSourceBatchSummary(batchId: string, aiSummary: string, output?: any) {
+  const updatePayload: any = { summary: aiSummary, status: 'completed' };
+
+  if (output && output.type === 'SUCCESS') {
+    const taskCount = output.tasks?.length || 0;
+    const eventCount = output.events?.length || 0;
+    const reviewCount = [
+      ...(output.tasks || []).map((t: any) => t.needs_review),
+      ...(output.events || []).map((e: any) => e.needs_review)
+    ].filter(Boolean).length;
+
+    updatePayload.metadata = {
+      task_count: taskCount,
+      event_count: eventCount,
+      review_count: reviewCount,
+      unresolved_notes: output.prep_gap_notes || []
+    };
+  }
+
   await supabase
     .from('source_batches')
-    .update({ summary: aiSummary, status: 'completed' })
+    .update(updatePayload)
     .eq('id', batchId);
 }

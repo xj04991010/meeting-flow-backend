@@ -79,6 +79,9 @@ export async function processConfirmationJob(userId: string, chatId: number, cal
             user_id: userId,
             content: payload.content,
             importance: payload.importance || 5,
+            memory_type: payload.memory_type || null,
+            entity_type: payload.entity_type || null,
+            evidence_text: payload.evidence_text || null,
             source_batch_id: batchId
           });
         }

@@ -926,7 +926,7 @@ async function transcribeAudio(audioBuffer: Buffer, filename: string, apiKey: st
   return data.text;
 }
 
-async function processTelegramUpdate(message: any) {
+export async function processTelegramUpdate(message: any) {
   const chatId = message.chat?.id;
   let text = message.text?.trim();
   
