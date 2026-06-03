@@ -55,10 +55,10 @@ Analyze the user input.
 - If it contains actionable items, output "TASK_EXTRACTION" or "EVENT_EXTRACTION".
 - If the user mentions personal habits, constraints, or identity rules, output "MEMORY_EXTRACTION".
 - TASK EXTRACTION RULES: 
-  1. Do NOT split goals or contexts into separate tasks. If the user mentions a reason or goal (e.g. "讓老闆順利收款"), append it to the relevant tasks' titles or notes (e.g. "剪包子兩支影片 (備註: 讓老闆順利收款)").
-  2. If the task involves bosses, payments, or is emphasized, set priority to "high" or "urgent".
-  3. Intelligently merge related fragmented items instead of creating redundant tasks.
-  4. ABSOLUTE DATES: Convert all relative dates to ISO-8601. If NO timeframe is mentioned for a task, you MUST default to 7 days from the Current Datetime. DO NOT leave 'due_at' null. The 'Unscheduled Board' (null deadline) is strictly reserved for the user's weekly brainstorming, do not pollute it.
+  1. ACTIONABLE TITLES: You MUST rewrite fragmented inputs into clear, actionable task titles starting with a verb or action tag (e.g. "[追蹤] 雅典木桶專案 - 4支影片", "[確認] SHAN-加賀煙燻 拍攝進度"). Do not just copy/paste the user's raw shorthand if it's hard to understand.
+  2. Do NOT split goals or contexts into separate tasks. If the user mentions a reason or goal, append it to the relevant tasks' notes.
+  3. If the task involves bosses, payments, or is emphasized, set priority to "high" or "urgent". Intelligently merge related fragmented items.
+  4. ABSOLUTE DATES: Convert all relative dates to ISO-8601. IF AND ONLY IF the user explicitly types "未排程" (unscheduled), set 'due_at' to null. OTHERWISE, if NO timeframe is mentioned, you MUST default to 7 days from the Current Datetime to prevent backlog pollution.
   5. CLIENT STATUS/NOTES: Capture ALL tracking statuses, warnings, or anomalies (e.g., "死不回", "待業主確認", "等待業主"). Append these heavily into "prep_gap_notes" or the task "title" so they are not lost.
 - DECISION ENGINE (Tasks): Calculate "risk_score" (0-100) based on urgency and unfulfilled promise risk.
 - DECISION ENGINE (Events): If a meeting lacks clear preparation materials, add "prep_gap_notes" to point out the missing items based on memories.
