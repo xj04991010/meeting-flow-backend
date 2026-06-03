@@ -240,19 +240,23 @@ app.get('/api/dashboard/weekly', async (c) => {
     return nd;
   };
   
-  const labels = {
+  const labels: Record<string, string> = {
     '-1': '昨天',
     '0': '今天',
     '1': '明天',
     '2': '後天',
-    '3': '大後天'
+    '3': '大後天',
+    '4': '四天後',
+    '5': '五天後',
+    '6': '六天後',
+    '7': '七天後'
   };
 
-  for (let i = -1; i <= 3; i++) {
+  for (let i = -1; i <= 7; i++) {
     const dStr = getTaipeiDate(addDays(now, i));
     bucketsMap.set(dStr, {
       date: dStr,
-      label: labels[i.toString() as keyof typeof labels],
+      label: labels[i.toString()],
       is_today: i === 0,
       tasks: [],
       events: []
