@@ -148,7 +148,7 @@ Output strictly valid JSON matching this schema:
     }
 
     // Low confidence: Send Inline Keyboard Confirmation (Preview Mode)
-    const summaryMsg = `📊 **萃取報告 (信心指數: ${Math.round(confidenceScore * 100)}%)**\n\n${output.reasoning_summary}\n\n已攔截：${output.tasks.length} 任務, ${output.events.length} 行程, ${output.memories.length} 記憶。\n\n⚠️ 狀態：等待您的確認。未經確認不會寫入正式資料庫。`;
+    const summaryMsg = `📊 **萃取報告**\n\n${output.reasoning_summary}\n\n已攔截：${output.tasks.length} 任務, ${output.events.length} 行程, ${output.memories.length} 記憶。\n\n⚠️ 狀態：等待您的確認。未經確認不會寫入正式資料庫。`;
     
     await reply(summaryMsg, [
       [{ text: '✅ 確認全部 (Confirm All)', callback_data: `confirm_all:${batchId}` }],
