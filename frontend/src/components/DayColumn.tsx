@@ -1,5 +1,5 @@
-import { memo, useState } from 'react';
-import { Calendar, CheckSquare, Clock, MapPin, Trash2, Maximize2, Minimize2 } from 'lucide-react';
+import { memo } from 'react';
+import { Calendar, CheckSquare, Clock, MapPin, Trash2 } from 'lucide-react';
 import type { DayColumnProps } from '../types';
 import { confidencePercent, formatTimeOnly, statusLabel } from '../utils';
 
@@ -36,37 +36,6 @@ export const DayColumn = memo(function DayColumn({
 }: DayColumnProps) {
   const isPast = isPastBucket(bucket.date);
   const daySuffix = getDaySuffix(bucket.date);
-  const [collapsed, setCollapsed] = useState(isPast);
-
-  if (collapsed) {
-    return (
-      <div
-        className={`day-column is-collapsed ${isPast ? 'is-past' : ''}`}
-        onClick={() => setCollapsed(false)}
-        title="點擊展開"
-        style={{
-          cursor: 'pointer',
-          width: '50px',
-          minWidth: '50px',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          opacity: 0.6,
-          background: 'var(--surface)',
-          border: '1px dashed var(--line)',
-          transition: 'all 0.2s',
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-        onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.6')}
-      >
-        <Maximize2 size={16} style={{ marginBottom: '16px', color: 'var(--text-muted)' }} />
-        <div style={{ writingMode: 'vertical-rl', letterSpacing: '4px', fontWeight: 600, color: 'var(--text-soft)' }}>
-          {bucket.label}
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div
@@ -94,13 +63,10 @@ export const DayColumn = memo(function DayColumn({
         }
       }}
     >
-      <div className="day-header" style={isPast ? { cursor: 'pointer' } : {}} onClick={() => isPast && setCollapsed(true)} title={isPast ? "點擊收起" : ""}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div>
-            <h3>{bucket.label}</h3>
-            <span>{bucket.date} {daySuffix}</span>
-          </div>
-          {isPast && <Minimize2 size={14} className="text-muted" style={{ opacity: 0.5 }} />}
+      <div className="day-header">
+        <div>
+          <h3>{bucket.label}</h3>
+          <span>{bucket.date} {daySuffix}</span>
         </div>
         {weather && (
           <div className="weather-chip" title="天氣預報">

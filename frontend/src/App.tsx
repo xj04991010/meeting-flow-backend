@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, Calendar, CheckSquare, LayoutDashboard, RefreshCcw, Settings } from 'lucide-react';
+import { Activity, AlertTriangle, Calendar, CheckSquare, LayoutDashboard, RefreshCcw, Settings, History } from 'lucide-react';
 import './App.css';
 
 import type { CalendarIntentRow, SourceBatchRow, TaskRow, UserRow, WeekBucket } from './types';
@@ -56,6 +56,7 @@ const WEATHER_LABELS: Record<number, string> = {
 function App() {
   const [user, setUser] = useState<UserRow | null>(null);
   const [weekView, setWeekView] = useState<WeekBucket[]>([]);
+  const [showPastDays, setShowPastDays] = useState(false);
   const [unscheduledTasks, setUnscheduledTasks] = useState<TaskRow[]>([]);
   const [batches, setBatches] = useState<SourceBatchRow[]>([]);
   const [allTasks, setAllTasks] = useState<TaskRow[]>([]);
@@ -376,9 +377,19 @@ function App() {
 
       <section className="calendar-priority" aria-label="週曆主工作區">
         <div className="calendar-section-header">
-          <div>
-            <span className="modal-eyebrow">Weekly Calendar</span>
-            <h2>週曆</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div>
+              <span className="modal-eyebrow">Weekly Calendar</span>
+              <h2>週曆</h2>
+            </div>
+            <button 
+              className={`icon-button compact ${showPastDays ? 'active' : 'subtle'}`}
+              onClick={() => setShowPastDays(!showPastDays)}
+              title={showPastDays ? "隱藏過去" : "展開過去兩天"}
+              style={{ alignSelf: 'flex-end', marginBottom: '4px' }}
+            >
+              <History size={16} />
+            </button>
           </div>
           <div className="calendar-inline-stats">
             <span>待審核 {reviewCount}</span>
@@ -397,7 +408,14 @@ function App() {
         <div className="week-grid-container">
           {weekView.length > 0 ? (
             <div className="week-grid">
-              {weekView.map((day) => (
+              {weekView.filter(day => {
+                if (showPastDays) return true;
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const parsed = new Date(day.date);
+                parsed.setHours(0, 0, 0, 0);
+                return !(!Number.isNaN(parsed.getTime()) && parsed < today);
+              }).map((day) => (
                 <DayColumn
                   key={`${day.date}-${day.label}`}
                   bucket={day}
