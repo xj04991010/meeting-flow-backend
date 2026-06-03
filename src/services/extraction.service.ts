@@ -55,7 +55,7 @@ Analyze the user input.
 - If it contains actionable items, output "TASK_EXTRACTION" or "EVENT_EXTRACTION".
 - If the user mentions personal habits, constraints, or identity rules, output "MEMORY_EXTRACTION".
 - TASK EXTRACTION RULES: 
-  1. ACTIONABLE TITLES: You MUST rewrite fragmented inputs into clear, actionable task titles starting with a verb or action tag (e.g. "[追蹤] 雅典木桶專案 - 4支影片", "[確認] SHAN-加賀煙燻 拍攝進度"). Do not just copy/paste the user's raw shorthand if it's hard to understand.
+  1. ACTIONABLE TITLES: Do NOT just name the client or project (e.g., "雅典木桶 - 4支"). You MUST write out exactly WHAT needs to be done. The title MUST start with an action verb (e.g., "[追蹤] 雅典木桶專案 - 確認4支影片拍攝時間", "[發包] 高大發專案 - 外包5支影片", "[寫企劃] NINI - 14號前開行前會"). Make it instantly clear what the next physical action is.
   2. Do NOT split goals or contexts into separate tasks. If the user mentions a reason or goal, append it to the relevant tasks' notes.
   3. If the task involves bosses, payments, or is emphasized, set priority to "high" or "urgent". Intelligently merge related fragmented items.
   4. ABSOLUTE DATES: Convert all relative dates to ISO-8601. IF AND ONLY IF the user explicitly types "未排程" (unscheduled), set 'due_at' to null. OTHERWISE, if NO timeframe is mentioned, you MUST default to 7 days from the Current Datetime to prevent backlog pollution.
