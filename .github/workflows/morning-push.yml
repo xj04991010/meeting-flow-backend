@@ -1,0 +1,19 @@
+name: Daily Morning Briefing
+
+on:
+  schedule:
+    # Runs at 01:00 UTC every day, which is 09:00 AM Taipei Time (UTC+8)
+    - cron: '0 1 * * *'
+  workflow_dispatch: # Allows manual triggering from GitHub UI
+
+jobs:
+  trigger_push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Morning Push API
+        run: |
+          curl -X POST \
+            -H "x-cron-token: meeting-flow-morning-2026" \
+            --max-time 120 \
+            --fail \
+            https://meeting-flow-backend-1.onrender.com/api/cron/morning

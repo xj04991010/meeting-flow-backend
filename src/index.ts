@@ -119,6 +119,23 @@ app.get('/', (c) => {
   });
 });
 
+// POST /api/cron/morning - Triggered by GitHub Actions
+app.post('/api/cron/morning', async (c) => {
+  const token = c.req.header('x-cron-token');
+  if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  
+  const { handleMorningCommand } = await import('./services/message-handler.service');
+  const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
+  
+  if (users) {
+    for (const user of users) {
+      await handleMorningCommand(user.telegram_chat_id, user.id);
+    }
+  }
+  
+  return c.json({ ok: true, message: 'Morning push sent' });
+});
+
 // GET /api/documents - Get deep research documents
 app.get('/api/documents', async (c) => {
   const userId = c.get('userId');
