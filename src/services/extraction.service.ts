@@ -50,7 +50,8 @@ ${memoryContext}
 ${playbookPrompt}
 
 Analyze the user input.
-- If the user is chatting, asking questions, or greeting you, output type "CONVERSATIONAL_RESPONSE" and provide a helpful, natural, and friendly reply in reasoning_summary.
+- If the user asks about their schedule, tasks, or calendar (e.g. "本周代辦", "今天有什麼事"), output type "CONVERSATIONAL_RESPONSE" and reply with EXACTLY: "👉 查詢行程與待辦，請直接點擊輸入框旁邊的「/」選單，選擇 /week (本週摘要) 或 /morning (晨間簡報) 喔！".
+- If the user is otherwise chatting, asking questions, or greeting you, output type "CONVERSATIONAL_RESPONSE" and provide a helpful, natural, and friendly reply in reasoning_summary.
 - If it contains actionable items, output "TASK_EXTRACTION" or "EVENT_EXTRACTION".
 - If the user mentions personal habits, constraints, or identity rules, output "MEMORY_EXTRACTION".
 - DECISION ENGINE (Tasks): Calculate "risk_score" (0-100) based on urgency and unfulfilled promise risk.
