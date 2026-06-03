@@ -185,8 +185,21 @@ function App() {
   };
 
   const handleUpdateTaskStatus = async (taskId: string, status: string) => {
-    await updateTaskStatus(taskId, status);
-    await fetchData();
+    // Optimistic UI update for zero latency feel
+    setAllTasks(prev => prev.map(t => t.id === taskId ? { ...t, status } : t));
+    setUnscheduledTasks(prev => prev.map(t => t.id === taskId ? { ...t, status } : t));
+    setWeekView(prev => prev.map(bucket => ({
+      ...bucket,
+      tasks: bucket.tasks.map(t => t.id === taskId ? { ...t, status } : t)
+    })));
+
+    try {
+      await updateTaskStatus(taskId, status);
+    } catch (e) {
+      console.error('Failed to update task status:', e);
+      // Revert if API failed
+      fetchData();
+    }
   };
 
   const handleToggleTaskComplete = (id: string, current: string) => {
