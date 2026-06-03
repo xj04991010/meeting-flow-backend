@@ -152,6 +152,16 @@ app.post('/api/cron/nudging', async (c) => {
   return c.json({ ok: true, message: 'Nudging push sent' });
 });
 
+app.post('/api/cron/weekly', async (c) => {
+  const token = c.req.header('x-cron-token');
+  if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  
+  const { decayUnusedMemories } = await import('./services/memory.service');
+  await decayUnusedMemories();
+  
+  return c.json({ ok: true, message: 'Weekly memory decay processed' });
+});
+
 app.post('/api/cron/evening', async (c) => {
   const token = c.req.header('x-cron-token');
   if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);

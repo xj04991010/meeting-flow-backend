@@ -17,6 +17,8 @@ on:
     - cron: '0 7 * * *'
     # Evening Report: 12:00 UTC = 20:00 Taipei
     - cron: '0 12 * * *'
+    # Weekly Memory Decay: Sunday 18:00 UTC = Monday 02:00 Taipei
+    - cron: '0 18 * * 0'
   
   workflow_dispatch: # Allows manual triggering from GitHub UI
 
@@ -29,6 +31,7 @@ jobs:
         run: |
           HOUR=$(date -u +"%H")
           MINUTE=$(date -u +"%M")
+          DAY=$(date -u +"%w")
           
           if [ "$MINUTE" = "50" ]; then
             echo "ACTION=WAKE_UP" >> $GITHUB_ENV
@@ -42,6 +45,9 @@ jobs:
           elif [ "$HOUR" = "12" ]; then
             echo "ACTION=EVENING" >> $GITHUB_ENV
             echo "Endpoint: POST /api/cron/evening"
+          elif [ "$HOUR" = "18" ] && [ "$DAY" = "0" ]; then
+            echo "ACTION=WEEKLY" >> $GITHUB_ENV
+            echo "Endpoint: POST /api/cron/weekly"
           else
             echo "ACTION=MANUAL_ALL" >> $GITHUB_ENV
           fi
@@ -57,7 +63,7 @@ jobs:
             -H "x-cron-token: meeting-flow-morning-2026" \
             --max-time 120 \
             --fail \
-            https://meeting-flow-backend-1.onrender.com/api/cron/morning
+            https://meeting-flow-backend-1.onrender.com/api/cron/morning || true
 
       - name: Execute Afternoon Nudging
         if: env.ACTION == 'NUDGING' || env.ACTION == 'MANUAL_ALL'
@@ -66,7 +72,7 @@ jobs:
             -H "x-cron-token: meeting-flow-morning-2026" \
             --max-time 120 \
             --fail \
-            https://meeting-flow-backend-1.onrender.com/api/cron/nudging
+            https://meeting-flow-backend-1.onrender.com/api/cron/nudging || true
 
       - name: Execute Evening Report
         if: env.ACTION == 'EVENING' || env.ACTION == 'MANUAL_ALL'
@@ -75,4 +81,13 @@ jobs:
             -H "x-cron-token: meeting-flow-morning-2026" \
             --max-time 120 \
             --fail \
-            https://meeting-flow-backend-1.onrender.com/api/cron/evening
+            https://meeting-flow-backend-1.onrender.com/api/cron/evening || true
+
+      - name: Execute Weekly Memory Decay
+        if: env.ACTION == 'WEEKLY' || env.ACTION == 'MANUAL_ALL'
+        run: |
+          curl -X POST \
+            -H "x-cron-token: meeting-flow-morning-2026" \
+            --max-time 120 \
+            --fail \
+            https://meeting-flow-backend-1.onrender.com/api/cron/weekly || true
