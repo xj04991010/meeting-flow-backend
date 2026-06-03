@@ -38,7 +38,8 @@ export function startJobWorker() {
               job.payload.chatId,
               job.payload.text,
               job.payload.batchId,
-              job.payload.voice
+              job.payload.voice,
+              job.payload.thinkingMessageId
             );
             console.log(`[Worker] Processed EXTRACT_MEETING for ${job.user_id}`);
           } else if (job.job_type === 'HANDLE_CALLBACK') {

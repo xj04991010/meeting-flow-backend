@@ -9,14 +9,14 @@ import { createDecisionLog } from './decision-logger.service';
 import { loadPlaybookRules, buildPlaybookPrompt } from './playbook.service';
 import { calculateRiskScore, detectPrepGap } from './strategy.service';
 
-export async function processExtractionJob(userId: string, chatId: number, text: string, batchId: string, voiceFileId?: string | null) {
+export async function processExtractionJob(userId: string, chatId: number, text: string, batchId: string, voiceFileId?: string | null, thinkingMessageId?: number | null) {\n  const reply = async (msg: string, buttons?: any) => { if (thinkingMessageId) { try { await editTelegramMessage(chatId, thinkingMessageId, msg, buttons); return; } catch (e) { console.error(e); } } await reply(msg, buttons); };
   try {
     let inputText = text;
     if (voiceFileId) {
-      await sendTelegram(chatId, '🎙️ 收到語音，正在轉錄...');
+      await reply('🎙️ 收到語音，正在轉錄...');
       const audioBuffer = await getTelegramFileBuffer(voiceFileId);
       inputText = await transcribeAudio(audioBuffer, 'voice.ogg');
-      await sendTelegram(chatId, `📝 語音轉錄內容：\n${inputText}`);
+      await reply(`📝 語音轉錄內容：\n${inputText}`);
     }
 
     const todayStr = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
@@ -71,7 +71,7 @@ Output strictly valid JSON matching this schema:
 
     if (!validation.success) {
       console.error('Zod validation failed:', validation.error);
-      await sendTelegram(chatId, `❌ AI 輸出格式異常，已中止。`);
+      await reply(`❌ AI 輸出格式異常，已中止。`);
       await updateSourceBatchSummary(batchId, 'Failed: Invalid JSON schema');
       return;
     }
@@ -111,7 +111,7 @@ Output strictly valid JSON matching this schema:
 
     // 5. Handle Conversational Response immediately
     if (output.type === 'CONVERSATIONAL_RESPONSE') {
-      await sendTelegram(chatId, `${output.reasoning_summary}`);
+      await reply(`${output.reasoning_summary}`);
       await updateSourceBatchSummary(batchId, 'Conversational response provided.');
       return;
     }
@@ -121,14 +121,14 @@ Output strictly valid JSON matching this schema:
     await updateSourceBatchSummary(batchId, output.reasoning_summary, output);
 
     if (candidatesCount === 0) {
-      await sendTelegram(chatId, `無任何需確認的任務或記憶。\n\n${output.reasoning_summary}`);
+      await reply(`無任何需確認的任務或記憶。\n\n${output.reasoning_summary}`);
       return;
     }
 
     // 7. Send Inline Keyboard Confirmation (Preview Mode)
     const summaryMsg = `📊 **萃取報告 (Preview Mode)**\n\n${output.reasoning_summary}\n\n已攔截：${output.tasks.length} 任務, ${output.events.length} 行程, ${output.memories.length} 記憶。\n\n⚠️ 狀態：等待您的確認。未經確認不會寫入正式資料庫。`;
     
-    await sendTelegram(chatId, summaryMsg, [
+    await reply(summaryMsg, [
       [{ text: '✅ 確認全部 (Confirm All)', callback_data: `confirm_all:${batchId}` }],
       [{ text: '🔍 進入儀表板細部修改', url: `https://meeting-flow-backend-1.onrender.com?uid=${userId}&batch=${batchId}` }],
       [{ text: '🗑️ 忽略丟棄 (Ignore)', callback_data: `ignore:${batchId}` }]
@@ -136,6 +136,6 @@ Output strictly valid JSON matching this schema:
 
   } catch (err: any) {
     console.error('processExtractionJob error:', err);
-    await sendTelegram(chatId, `❌ 處理失敗：${err.message}`);
+    await reply(`❌ 處理失敗：${err.message}`);
   }
 }

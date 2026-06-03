@@ -63,7 +63,8 @@ telegramRoute.post('/webhook', async (c) => {
         
         // 2. Fast ACK / Thinking message
         // Instead of running LLM here, we just save to DB and queue job
-        await sendThinkingMessage(chatId, false);
+        const isShort = text.length <= 50;
+        const thinkingMessageId = await sendThinkingMessage(chatId, isShort);
         
         const batchId = await createSourceBatch(userId, text || 'voice_or_file_placeholder');
         
@@ -72,7 +73,8 @@ telegramRoute.post('/webhook', async (c) => {
           chatId,
           text,
           voice: message.voice ? message.voice.file_id : null,
-          batchId
+          batchId,
+          thinkingMessageId
         });
       }
     } else if (callback) {
