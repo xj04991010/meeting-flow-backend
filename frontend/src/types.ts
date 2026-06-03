@@ -108,12 +108,7 @@ export type ReviewPanelProps = {
   onDeleteEvent?: (eventId: string) => void;
 };
 
-export type BacklogPanelProps = {
-  tasks: TaskRow[];
-  onEditTask: (task: TaskRow) => void;
-  onToggleTaskComplete: (taskId: string, currentStatus: string) => void;
-  onDeleteTask?: (taskId: string) => void;
-};
+
 
 export type BatchListProps = {
   batches: SourceBatchRow[];

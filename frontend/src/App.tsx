@@ -12,6 +12,7 @@ import {
   updateCalendarIntent,
   updateTask,
   updateTaskStatus,
+  saveUserSettings,
 } from './api';
 
 import { BatchList } from './components/BatchList';
@@ -185,11 +186,18 @@ function App() {
   }, [fetchData]);
 
   const handleSaveSettings = (city: string, aiSettings: { provider: string; model: string; apiKey: string }) => {
-    void aiSettings;
     setPreferredCity(city);
     localStorage.setItem('preferredCity', city);
     setShowSettings(false);
     void fetchWeather(city);
+    
+    // Save AI settings to backend
+    void saveUserSettings({
+      weather_city: city,
+      ai_provider: aiSettings.provider,
+      ai_model: aiSettings.model,
+      api_key: aiSettings.apiKey
+    });
   };
 
   const handleUpdateTaskStatus = async (taskId: string, status: string) => {

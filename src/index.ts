@@ -127,9 +127,17 @@ app.get('/', (c) => {
 });
 
 // POST /api/cron/morning - Triggered by GitHub Actions
+async function acquireCronLock(jobType: string): Promise<boolean> {
+  const todayStr = new Date().toLocaleString('en-CA', { timeZone: 'Asia/Taipei' }).split(',')[0];
+  const { error } = await supabase.from('cron_runs').insert([{ job_type: jobType, run_date: todayStr }]);
+  if (error && error.code === '23505') return false; // Already ran
+  return true;
+}
+
 app.post('/api/cron/morning', async (c) => {
   const token = c.req.header('x-cron-token');
   if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await acquireCronLock('morning'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleMorningCommand } = await import('./services/message-handler.service');
   const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
@@ -146,6 +154,7 @@ app.post('/api/cron/morning', async (c) => {
 app.post('/api/cron/nudging', async (c) => {
   const token = c.req.header('x-cron-token');
   if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await acquireCronLock('nudging'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleNudgingCommand } = await import('./services/message-handler.service');
   const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
@@ -162,6 +171,7 @@ app.post('/api/cron/nudging', async (c) => {
 app.post('/api/cron/weekly', async (c) => {
   const token = c.req.header('x-cron-token');
   if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await acquireCronLock('weekly'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { decayUnusedMemories } = await import('./services/memory.service');
   await decayUnusedMemories();
@@ -172,6 +182,7 @@ app.post('/api/cron/weekly', async (c) => {
 app.post('/api/cron/evening', async (c) => {
   const token = c.req.header('x-cron-token');
   if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await acquireCronLock('evening'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleEveningCommand } = await import('./services/message-handler.service');
   const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
@@ -494,67 +505,7 @@ app.route('/api', googleCalendarRouter);
 
 requireEnv();
 
-const cron = require('node-cron');
-
-function setupCronJobs() {
-  // Daily Briefing at 09:00 AM (Taipei Time)
-  cron.schedule('0 9 * * *', async () => {
-    console.log('[Cron] Running Daily Briefing...');
-    try {
-      const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
-      if (!users) return;
-
-      const { handleMorningCommand } = await import('./services/message-handler.service');
-      for (const user of users) {
-        await handleMorningCommand(user.telegram_chat_id, user.id);
-      }
-    } catch (e) {
-      console.error('[Cron] Daily Briefing error:', e);
-    }
-  }, { timezone: 'Asia/Taipei' });
-
-  // Deadline Nudging at 15:00 (Taipei Time)
-  cron.schedule('0 15 * * *', async () => {
-    console.log('[Cron] Running Deadline Nudging...');
-    try {
-      const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
-      if (!users) return;
-
-      const todayStr = new Date().toLocaleString('en-CA', { timeZone: 'Asia/Taipei' }).split(',')[0];
-      
-      for (const user of users) {
-        // Find high priority tasks due today that are still pending
-        const { data: tasks } = await supabase.from('tasks')
-          .select('id, title, category')
-          .eq('user_id', user.id)
-          .neq('status', 'completed')
-          .eq('priority', 'high')
-          .gte('deadline', todayStr)
-          .lt('deadline', todayStr + 'T23:59:59');
-
-        if (!tasks || tasks.length === 0) continue;
-
-        const prompt = `You are a top-tier Executive Assistant. Your persona is a minimalist, precise, zero-bullshit, data-driven expert serving an INTJ/ENTJ boss.
-It's 3:00 PM. The user has HIGH PRIORITY tasks due today that are NOT YET COMPLETED:
-${JSON.stringify(tasks)}
-
-Write a hyper-efficient, data-driven status check. No polite fluff. Demand an immediate execution status update (Complete / Postpone / In Progress) based on logical necessity.
-Use Traditional Chinese and minimal emojis.`;
-
-        const reply = await callLLM(user.id, [{ role: 'user', content: prompt }]);
-        if (reply) {
-          await sendTelegram(user.telegram_chat_id, `🚨 **[進度追蹤]**\n\n${reply}`);
-        }
-      }
-    } catch (e) {
-      console.error('[Cron] Deadline Nudging error:', e);
-    }
-  }, { timezone: 'Asia/Taipei' });
-}
-
 console.log(`MeetingFlow backend is running on port ${PORT}`);
-
-setupCronJobs();
 
 serve({
   fetch: app.fetch,
