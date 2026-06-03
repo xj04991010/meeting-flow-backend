@@ -964,8 +964,6 @@ Rules:
 
 async function handleWeekCommand(chatId: number, userId: string) {
   if (!chatId) return;
-  const thinkingId = await sendThinkingMessage(chatId);
-  if (!thinkingId) return;
 
   const todayStr = new Date().toLocaleString('en-CA', { timeZone: 'Asia/Taipei' }).split(',')[0];
   const nextWeekStr = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleString('en-CA', { timeZone: 'Asia/Taipei' }).split(',')[0];
@@ -1038,5 +1036,5 @@ async function handleWeekCommand(chatId: number, userId: string) {
     { text: '✨ 打開 Dashboard 排程總覽', url: getDashboardUrl(userId) }
   ]];
 
-  await editTelegramMessage(chatId, thinkingId, lines.join('\n'), buttons);
+  await sendTelegram(chatId, lines.join('\n'), buttons);
 }
