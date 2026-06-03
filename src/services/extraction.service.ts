@@ -133,12 +133,22 @@ Output strictly valid JSON matching this schema:
     await updateSourceBatchSummary(batchId, output.reasoning_summary, output);
 
     if (candidatesCount === 0) {
-      await reply(`無任何需確認的任務或記憶。\n\n${output.reasoning_summary}`);
+      await reply(`無任何需處理的任務或記憶。\n\n${output.reasoning_summary}`);
       return;
     }
 
-    // 7. Send Inline Keyboard Confirmation (Preview Mode)
-    const summaryMsg = `📊 **萃取報告 (Preview Mode)**\n\n${output.reasoning_summary}\n\n已攔截：${output.tasks.length} 任務, ${output.events.length} 行程, ${output.memories.length} 記憶。\n\n⚠️ 狀態：等待您的確認。未經確認不會寫入正式資料庫。`;
+    // 7. Auto-Confirm High Confidence Or Request Manual Confirmation
+    const confidenceScore = output.confidence || 0;
+    
+    // threshold set to 0.85
+    if (confidenceScore >= 0.85) {
+      const { autoConfirmBatch } = await import('./confirmation.service');
+      const confirmed = await autoConfirmBatch(userId, batchId, chatId);
+      if (confirmed) return; // autoConfirmBatch will send the telegram success reply
+    }
+
+    // Low confidence: Send Inline Keyboard Confirmation (Preview Mode)
+    const summaryMsg = `📊 **萃取報告 (信心指數: ${Math.round(confidenceScore * 100)}%)**\n\n${output.reasoning_summary}\n\n已攔截：${output.tasks.length} 任務, ${output.events.length} 行程, ${output.memories.length} 記憶。\n\n⚠️ 狀態：等待您的確認。未經確認不會寫入正式資料庫。`;
     
     await reply(summaryMsg, [
       [{ text: '✅ 確認全部 (Confirm All)', callback_data: `confirm_all:${batchId}` }],
