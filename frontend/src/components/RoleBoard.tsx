@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import { Calendar, Layers3, Trash2 } from 'lucide-react';
 import type { TaskRow } from '../types';
 import { formatDateOnly } from '../utils';
@@ -11,7 +11,7 @@ type RoleBoardProps = {
   onDeleteTask: (taskId: string) => void;
 };
 
-const DEFAULT_CATEGORIES = ['工作', '客戶', '研究', '個人', '其他'];
+const DEFAULT_CATEGORIES = ['工作', '客戶', '研究', '其他'];
 
 export const RoleBoard = memo(function RoleBoard({
   tasks,
@@ -21,23 +21,12 @@ export const RoleBoard = memo(function RoleBoard({
   onDeleteTask,
 }: RoleBoardProps) {
   const categories = useMemo(() => {
+    // Force exactly 4 categories for the 4-grid layout
     const baseCategories = customCategories && customCategories.length > 0 ? customCategories : DEFAULT_CATEGORIES;
-    const set = new Set(baseCategories);
-    tasks.forEach((task) => {
-      if (task.category) set.add(task.category);
-    });
-    return Array.from(set);
-  }, [tasks, customCategories]);
-
-  const [activeTab, setActiveTab] = useState(categories[0] || '其他');
-  const activeCategory = categories.includes(activeTab) ? activeTab : categories[0] || '其他';
-
-  const activeTasks = useMemo(() => {
-    return tasks.filter((task) => {
-      if (!task.category && activeCategory === '其他') return true;
-      return task.category === activeCategory;
-    });
-  }, [tasks, activeCategory]);
+    const finalCats = [...baseCategories];
+    while (finalCats.length < 4) finalCats.push('其他');
+    return finalCats.slice(0, 4);
+  }, [customCategories]);
 
   return (
     <section className="panel backlog-panel">
@@ -49,72 +38,99 @@ export const RoleBoard = memo(function RoleBoard({
         <span className="badge">{tasks.length}</span>
       </div>
 
-      <div className="tab-row" role="tablist" aria-label="任務分類">
-        {categories.map((category) => (
-          <button
-            key={category}
-            className={`tab-button ${activeCategory === category ? 'active' : ''}`}
-            onClick={() => setActiveTab(category)}
-            role="tab"
-            aria-selected={activeCategory === category}
-          >
-            {category}
-          </button>
-        ))}
-      </div>
+      <div className="role-board-grid" style={{ 
+        display: 'grid', 
+        gridTemplateColumns: 'repeat(4, 1fr)', 
+        gap: '16px',
+        alignItems: 'start'
+      }}>
+        {categories.map((category, idx) => {
+          const categoryTasks = tasks.filter((task) => {
+            if (!task.category && category === '其他') return true;
+            return task.category === category;
+          });
 
-      <div className="role-task-list">
-        {activeTasks.length === 0 ? (
-          <div className="empty-state">此分類沒有未排程任務。</div>
-        ) : (
-          activeTasks.map((task) => (
-            <article
-              key={task.id}
-              className={`task-card ${task.status === 'completed' ? 'completed' : ''}`}
-              draggable
-              onClick={() => onEditTask(task)}
-              onDragStart={(event) => {
-                event.dataTransfer.setData('type', 'task');
-                event.dataTransfer.setData('id', task.id);
-                event.dataTransfer.setData('taskId', task.id);
-              }}
-            >
-              <div className="task-header">
-                <button
-                  className={`check-btn ${task.status === 'completed' ? 'checked' : ''}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onToggleTaskComplete(task.id, task.status || 'pending');
-                  }}
-                  title="切換完成狀態"
-                />
-                <strong className="card-title">
-                  {task.priority === 'high' && <span className="priority-dot">高</span>}
-                  {task.title}
-                </strong>
+          return (
+            <div key={`${category}-${idx}`} className="role-column" style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: '12px',
+              background: 'var(--surface)',
+              padding: '12px',
+              borderRadius: '8px',
+              border: '1px solid var(--line)'
+            }}>
+              <h3 style={{ 
+                margin: '0', 
+                fontSize: '14px', 
+                color: 'var(--text-soft)', 
+                borderBottom: '1px solid var(--line)', 
+                paddingBottom: '8px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                {category}
+                <span className="badge">{categoryTasks.length}</span>
+              </h3>
+              
+              <div className="role-task-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {categoryTasks.length === 0 ? (
+                  <div className="empty-state" style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)' }}>無任務</div>
+                ) : (
+                  categoryTasks.map((task) => (
+                    <article
+                      key={task.id}
+                      className={`task-card ${task.status === 'completed' ? 'completed' : ''}`}
+                      draggable
+                      onClick={() => onEditTask(task)}
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData('type', 'task');
+                        event.dataTransfer.setData('id', task.id);
+                        event.dataTransfer.setData('taskId', task.id);
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <div className="task-header">
+                        <button
+                          className={`check-btn ${task.status === 'completed' ? 'checked' : ''}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleTaskComplete(task.id, task.status || 'pending');
+                          }}
+                          title="切換完成狀態"
+                        />
+                        <strong className="card-title">
+                          {task.priority === 'high' && <span className="priority-dot">高</span>}
+                          {task.title}
+                        </strong>
+                      </div>
+                      <div className="card-footer">
+                        <span className="muted-line">
+                          <Calendar size={12} />
+                          {task.deadline ? formatDateOnly(task.deadline) : '未排程'}
+                        </span>
+                        <div className="card-actions">
+                          {task.client && <span className="client-tag">{task.client}</span>}
+                          <button
+                            className="icon-button compact danger"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onDeleteTask(task.id);
+                            }}
+                            title="刪除任務"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  ))
+                )}
               </div>
-              <div className="card-footer">
-                <span className="muted-line">
-                  <Calendar size={12} />
-                  {task.deadline ? formatDateOnly(task.deadline) : '未排程'}
-                </span>
-                <div className="card-actions">
-                  {task.client && <span className="client-tag">{task.client}</span>}
-                  <button
-                    className="icon-button compact danger"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onDeleteTask(task.id);
-                    }}
-                    title="刪除任務"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </div>
-            </article>
-          ))
-        )}
+            </div>
+          );
+        })}
       </div>
     </section>
   );
