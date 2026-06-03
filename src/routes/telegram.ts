@@ -1,3 +1,4 @@
+import { getOrCreateUser } from '../repositories/users.repo';
 import { Hono } from 'hono';
 import { markTelegramUpdateReceived } from '../repositories/message-events.repo';
 import { createSourceBatch } from '../repositories/source-batches.repo';
@@ -9,26 +10,15 @@ import { sendThinkingMessage } from '../services/telegram.service';
 
 export const telegramRoute = new Hono<{ Variables: { userId: string } }>();
 
-async function getOrCreateUser(telegramChatId: number): Promise<string> {
-  const { data: user } = await supabase
-    .from('users')
-    .select('id')
-    .eq('telegram_chat_id', telegramChatId)
-    .maybeSingle();
 
-  if (user) return user.id;
-
-  const { data: newUser, error } = await supabase
-    .from('users')
-    .insert({ telegram_chat_id: telegramChatId })
-    .select('id')
-    .single();
-
-  if (error) throw error;
-  return newUser.id;
-}
 
 telegramRoute.post('/webhook', async (c) => {
+  const secret = c.req.header('X-Telegram-Bot-Api-Secret-Token');
+  if (process.env.TELEGRAM_WEBHOOK_SECRET && secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
+    console.error('Unauthorized webhook access attempt');
+    return c.text('Unauthorized', 401);
+  }
+
   try {
     const body = await c.req.json();
     const updateId = body.update_id;

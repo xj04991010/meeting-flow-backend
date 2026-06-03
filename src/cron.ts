@@ -10,6 +10,12 @@ import { supabase } from './utils/db';
 // Keep track of notified events to prevent duplicate notifications
 const notifiedEventIds = new Set<string>();
 
+// Clear cache every hour to prevent memory leaks
+setInterval(() => {
+  notifiedEventIds.clear();
+  console.log('[CRON] Cleared notifiedEventIds cache');
+}, 60 * 60 * 1000);
+
 /**
  * Start all proactive background reminders
  */

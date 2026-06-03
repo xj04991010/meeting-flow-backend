@@ -24,11 +24,18 @@ startJobWorker();
 type Variables = { userId: string };
 const app = new Hono<{ Variables: Variables }>();
 
-import { SUPABASE_URL, SUPABASE_KEY, TELEGRAM_BOT_TOKEN, GROQ_API_KEY, DASHBOARD_BASE_URL, getDashboardUrl, PORT, PARSER_VERSION, GROQ_TIMEOUT_MS, requireEnv } from './utils/env';
+import { SUPABASE_URL, SUPABASE_KEY, TELEGRAM_BOT_TOKEN, GROQ_API_KEY, DASHBOARD_BASE_URL, getDashboardUrl, PORT, PARSER_VERSION, GROQ_TIMEOUT_MS, requireEnv, CRON_SECRET } from './utils/env';
+
+// Validate environment variables immediately
+requireEnv();
+
 import { supabase } from './utils/db';
 
+const defaultOrigins = ['http://127.0.0.1:5173', 'http://localhost:5173', 'https://meeting-flow-backend-1.onrender.com'];
+const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : defaultOrigins;
+
 app.use('/api/*', cors({
-  origin: ['http://127.0.0.1:5173', 'http://localhost:5173', 'https://meeting-flow-backend-1.onrender.com'],
+  origin: allowedOrigins,
   allowMethods: ['GET', 'PATCH', 'POST', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization']
 }));
@@ -43,8 +50,8 @@ app.use('/api/*', async (c, next) => {
   
   const initData = authHeader.substring(4);
   
-  // Dev fallback support
-  if (initData.length === 36 && initData.includes('-')) {
+  // Dev fallback support — ONLY in non-production
+  if (process.env.NODE_ENV !== 'production' && initData.length === 36 && initData.includes('-')) {
     c.set('userId', initData);
     return await next();
   }
@@ -453,17 +460,25 @@ app.get('/api/user-settings', async (c) => {
   const userId = c.get('userId');
   const { data, error } = await supabase.from('users').select('ai_provider, ai_model, api_key').eq('id', userId).single();
   if (error) return c.json({ error: error.message }, 500);
-  return c.json(data || {});
+  return c.json({
+    ai_provider: data?.ai_provider,
+    ai_model: data?.ai_model,
+    has_api_key: !!data?.api_key
+  });
 });
 
 app.patch('/api/user-settings', async (c) => {
   const userId = c.get('userId');
   const body = await c.req.json();
-  const { error } = await supabase.from('users').update({
+  const updateData: any = {
     ai_provider: body.ai_provider,
     ai_model: body.ai_model,
-    api_key: body.api_key
-  }).eq('id', userId);
+  };
+  if (body.api_key) {
+    updateData.api_key = body.api_key;
+  }
+  
+  const { error } = await supabase.from('users').update(updateData).eq('id', userId);
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ ok: true });
 });
@@ -546,7 +561,8 @@ serve({
     // V2 Route matches POST /webhook on the root
     const webhookUrl = `${externalUrl}/webhook`; 
     try {
-      const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${webhookUrl}`);
+      const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET ? `&secret_token=${process.env.TELEGRAM_WEBHOOK_SECRET}` : '';
+      const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${webhookUrl}${secretToken}`);
       const data = await res.json() as any;
       if (data.ok) {
         console.log(`✅ Webhook successfully set to ${webhookUrl}`);

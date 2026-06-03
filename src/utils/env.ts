@@ -14,6 +14,8 @@ export function getDashboardUrl(uid?: string) {
   return uid ? `${DASHBOARD_BASE_URL}?uid=${uid}` : DASHBOARD_BASE_URL;
 }
 
+export const CRON_SECRET = process.env.CRON_SECRET || 'fallback-secret';
+
 export function requireEnv() {
   const missing = [
     ['SUPABASE_URL', SUPABASE_URL],
@@ -23,6 +25,7 @@ export function requireEnv() {
   ].filter(([, value]) => !value);
 
   if (missing.length > 0) {
-    console.warn(`Missing environment variables: ${missing.map(([key]) => key).join(', ')}`);
+    console.error(`❌ Missing required environment variables: ${missing.map(([key]) => key).join(', ')}`);
+    process.exit(1);
   }
 }

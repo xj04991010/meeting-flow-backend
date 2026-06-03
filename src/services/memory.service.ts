@@ -23,8 +23,12 @@ export async function loadRelevantMemories(userId: string, inputText: string): P
 export async function reinforceMemory(memoryId: string): Promise<void> {
   try {
     // Increment used_count, accepted_count and bump importance up to 1.0
-    await supabase.rpc('reinforce_memory', { target_memory_id: memoryId });
-    // If rpc doesn't exist, we can fallback to raw update via postgres logic or fetch then update
+    const { error: rpcError } = await supabase.rpc('reinforce_memory', { target_memory_id: memoryId });
+    
+    // If RPC succeeds, return immediately to avoid double updating
+    if (!rpcError) return;
+    
+    console.warn('reinforce_memory RPC failed, using fallback:', rpcError.message);
     
     // Fallback logic
     const { data } = await supabase.from('memories').select('importance, used_count, accepted_count').eq('id', memoryId).single();

@@ -113,11 +113,14 @@ async function getGoogleAuthClient(userId: string) {
 googleCalendarRouter.post('/calendar-intents/:id/sync', async (c) => {
   const intentId = c.req.param('id');
   
+  const userId = c.get('userId');
+  
   // Get intent details
   const { data: intent, error: intentError } = await supabase
     .from('calendar_intents')
     .select('*')
     .eq('id', intentId)
+    .eq('user_id', userId)
     .single();
     
   if (intentError || !intent) return c.json({ error: 'Intent not found' }, 404);
@@ -164,9 +167,7 @@ googleCalendarRouter.post('/calendar-intents/:id/sync', async (c) => {
 
 // POST /api/calendar-intents/sync-batch
 googleCalendarRouter.post('/calendar-intents/sync-batch', async (c) => {
-  const body = await c.req.json();
-  const userId = body.user_id;
-  if (!userId) return c.json({ error: 'user_id is required' }, 400);
+  const userId = c.get('userId');
 
   const result = await syncBatchInternal(userId);
   if ('error' in result) {
