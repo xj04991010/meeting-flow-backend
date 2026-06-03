@@ -28,6 +28,16 @@ function getAuthHeaders(): Record<string, string> {
 
 // ─── 讀取 ─────────────────────────────────
 
+/** 取得交接日誌 */
+export async function fetchJournals(): Promise<any[]> {
+  const url = new URL(`${BACKEND_URL}/api/dashboard/journals`);
+  const res = await fetch(url.toString(), {
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error(`API failed: ${res.status}`);
+  return res.json();
+}
+
 /** 取得周曆視圖資料（含所有 tasks, events, batches） */
 export async function fetchWeeklyDashboard(dateStr?: string): Promise<WeeklyDashboardResponse> {
   const url = new URL(`${BACKEND_URL}/api/dashboard/weekly`);

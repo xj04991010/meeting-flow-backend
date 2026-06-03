@@ -1,3 +1,11 @@
+export type JournalRow = {
+  id: string;
+  user_id?: string;
+  date: string;
+  content: string;
+  created_at: string;
+};
+
 export type UserRow = {
   id: string;
   telegram_chat_id?: number | null;

@@ -205,6 +205,14 @@ app.get('/api/documents', async (c) => {
 });
 
 // GET /api/dashboard/weekly - Structured Weekly View
+
+app.get('/api/dashboard/journals', async (c) => {
+  const userId = c.get('userId');
+  const { data, error } = await supabase.from('daily_journals').select('*').eq('user_id', userId).order('date', { ascending: false }).limit(7);
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json(data);
+});
+
 app.get('/api/dashboard/weekly', async (c) => {
   const userId = c.get('userId');
   if (!userId) return c.json({ error: 'Unauthorized' }, 401);

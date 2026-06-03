@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, AlertTriangle, Calendar, CheckSquare, LayoutDashboard, RefreshCcw, Settings, History } from 'lucide-react';
 import './App.css';
 
-import type { CalendarIntentRow, SourceBatchRow, TaskRow, UserRow, WeekBucket } from './types';
+import type { CalendarIntentRow, SourceBatchRow, TaskRow, UserRow, WeekBucket, JournalRow } from './types';
 import {
   confirmCalendarIntent,
   fetchWeeklyDashboard,
+  fetchJournals,
   getGoogleAuthUrl,
   syncEventToGoogle,
   updateCalendarIntent,
@@ -19,6 +20,7 @@ import { EditModal } from './components/EditModal';
 import { QuickInput } from './components/QuickInput';
 import { ReviewPanel } from './components/ReviewPanel';
 import { RoleBoard } from './components/RoleBoard';
+import { JournalOverview } from './components/JournalOverview';
 import { SettingsModal, TAIWAN_CITIES } from './components/SettingsModal';
 import { WeeklyTasks } from './components/WeeklyTasks';
 
@@ -59,6 +61,7 @@ function App() {
   const [showPastDays, setShowPastDays] = useState(false);
   const [unscheduledTasks, setUnscheduledTasks] = useState<TaskRow[]>([]);
   const [batches, setBatches] = useState<SourceBatchRow[]>([]);
+  const [journals, setJournals] = useState<JournalRow[]>([]);
   const [allTasks, setAllTasks] = useState<TaskRow[]>([]);
   const [allEvents, setAllEvents] = useState<CalendarIntentRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,13 +87,17 @@ function App() {
     setRefreshing(true);
     try {
       setDashboardError(null);
-      const payload = await fetchWeeklyDashboard(selectedDate);
+      const [payload, journalsData] = await Promise.all([
+        fetchWeeklyDashboard(selectedDate),
+        fetchJournals().catch(() => [])
+      ]);
       setUser(payload.user || null);
       setWeekView(payload.week_view || []);
       setUnscheduledTasks(payload.unscheduled_tasks || []);
       setBatches(payload.batches || []);
       setAllTasks(payload.tasks || []);
       setAllEvents(payload.calendarIntents || []);
+      setJournals(journalsData || []);
     } catch (error) {
       setDashboardError(error instanceof Error ? error.message : '資料同步失敗');
     } finally {
@@ -434,7 +441,8 @@ function App() {
               </div>
             </div>
           </section>
-          <BatchList batches={batches} />
+          <BatchList batches={batches} />\n          <JournalOverview journals={journals} />
+          <JournalOverview journals={journals} />
         </aside>
       </main>
 
