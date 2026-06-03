@@ -384,7 +384,6 @@ function App() {
 
       <main className="operations-layout">
         <section className="secondary-workspace">
-          {user && <QuickInput onSuccess={fetchData} />}
           <WeeklyTasks
             tasks={allTasks}
             selectedDate={selectedDate}
@@ -398,6 +397,7 @@ function App() {
             onToggleTaskComplete={handleToggleTaskComplete}
             onDeleteTask={handleDeleteTask}
           />
+          {user && <QuickInput onSuccess={fetchData} />}
         </section>
 
         <aside className="sidebar support-sidebar">
