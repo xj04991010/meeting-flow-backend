@@ -1482,3 +1482,14 @@ button:not(.icon-button):not(.ghost):not(.tab-button):not(.check-btn):not(.icon-
     transition-duration: 1ms !important;
   }
 }
+
+.linear-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Ensure full width panels stretch correctly */
+.linear-layout > * {
+  width: 100%;
+}

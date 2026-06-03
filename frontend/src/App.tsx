@@ -382,71 +382,14 @@ function App() {
         </div>
       </header>
 
-      <main className="operations-layout">
-        <section className="secondary-workspace">
-          <WeeklyTasks
+      <div className="linear-layout">
+        <WeeklyTasks
             tasks={allTasks}
             selectedDate={selectedDate}
             onEditTask={(task) => setEditing({ type: 'task', item: task })}
             onToggleTaskComplete={handleToggleTaskComplete}
           />
-          <RoleBoard
-            tasks={unscheduledTasks}
-            customCategories={user?.custom_categories}
-            onEditTask={(task) => setEditing({ type: 'task', item: task })}
-            onToggleTaskComplete={handleToggleTaskComplete}
-            onDeleteTask={handleDeleteTask}
-          />
-          {user && <QuickInput onSuccess={fetchData} />}
-        </section>
-
-        <aside className="sidebar support-sidebar">
-          <ReviewPanel
-            tasks={reviewTasks}
-            events={reviewEvents}
-            onConfirmTask={handleConfirmTask}
-            onConfirmEvent={handleConfirmEvent}
-            onEditTask={(task) => setEditing({ type: 'task', item: task })}
-            onEditEvent={(event) => setEditing({ type: 'event', item: event })}
-            onDeleteTask={handleDeleteTask}
-            onDeleteEvent={handleDeleteEvent}
-          />
-          <section className="summary-strip compact" aria-label="本週摘要">
-            <div className="metric-card attention">
-              <AlertTriangle size={18} />
-              <div>
-                <span>待審核</span>
-                <strong>{reviewCount}</strong>
-              </div>
-            </div>
-            <div className="metric-card">
-              <CheckSquare size={18} />
-              <div>
-                <span>未完成任務</span>
-                <strong>{activeTaskCount}</strong>
-              </div>
-            </div>
-            <div className="metric-card">
-              <Calendar size={18} />
-              <div>
-                <span>有效行程</span>
-                <strong>{activeEventCount}</strong>
-              </div>
-            </div>
-            <div className="metric-card success">
-              <Activity size={18} />
-              <div>
-                <span>完成 / 同步</span>
-                <strong>{completedTaskCount} / {syncedEventCount}</strong>
-              </div>
-            </div>
-          </section>
-          <BatchList batches={batches} />\n          <JournalOverview journals={journals} />
-          <JournalOverview journals={journals} />
-        </aside>
-      </main>
-
-      <section className="calendar-priority" aria-label="週曆主工作區">
+        <section className="calendar-priority" aria-label="週曆主工作區">
         <div className="calendar-section-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <div>
@@ -512,6 +455,57 @@ function App() {
         </div>
 
       </section>
+        <ReviewPanel
+            tasks={reviewTasks}
+            events={reviewEvents}
+            onConfirmTask={handleConfirmTask}
+            onConfirmEvent={handleConfirmEvent}
+            onEditTask={(task) => setEditing({ type: 'task', item: task })}
+            onEditEvent={(event) => setEditing({ type: 'event', item: event })}
+            onDeleteTask={handleDeleteTask}
+            onDeleteEvent={handleDeleteEvent}
+          />
+        <RoleBoard
+            tasks={unscheduledTasks}
+            customCategories={user?.custom_categories}
+            onEditTask={(task) => setEditing({ type: 'task', item: task })}
+            onToggleTaskComplete={handleToggleTaskComplete}
+            onDeleteTask={handleDeleteTask}
+          />
+        <section className="summary-strip" aria-label="本週摘要">
+            <div className="metric-card attention">
+              <AlertTriangle size={18} />
+              <div>
+                <span>待審核</span>
+                <strong>{reviewCount}</strong>
+              </div>
+            </div>
+            <div className="metric-card">
+              <CheckSquare size={18} />
+              <div>
+                <span>未完成任務</span>
+                <strong>{activeTaskCount}</strong>
+              </div>
+            </div>
+            <div className="metric-card">
+              <Calendar size={18} />
+              <div>
+                <span>有效行程</span>
+                <strong>{activeEventCount}</strong>
+              </div>
+            </div>
+            <div className="metric-card success">
+              <Activity size={18} />
+              <div>
+                <span>完成 / 同步</span>
+                <strong>{completedTaskCount} / {syncedEventCount}</strong>
+              </div>
+            </div>
+          </section>
+        <BatchList batches={batches} />
+        <JournalOverview journals={journals} />
+        {user && <QuickInput onSuccess={fetchData} />}
+      </div>
 
       {editing && (
         <EditModal
