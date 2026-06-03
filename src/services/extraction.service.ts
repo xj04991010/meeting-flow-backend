@@ -58,6 +58,8 @@ Analyze the user input.
   1. Do NOT split goals or contexts into separate tasks. If the user mentions a reason or goal (e.g. "讓老闆順利收款"), append it to the relevant tasks' titles or notes (e.g. "剪包子兩支影片 (備註: 讓老闆順利收款)").
   2. If the task involves bosses, payments, or is emphasized, set priority to "high" or "urgent".
   3. Intelligently merge related fragmented items instead of creating redundant tasks.
+  4. ABSOLUTE DATES: You MUST convert all relative or implicit dates (e.g., "6月10號前", "14號前", "本周日", "兩周內") into absolute ISO-8601 format for 'due_at' based on the Current Datetime. NEVER leave 'due_at' null if a timeframe is mentioned.
+  5. CLIENT STATUS/NOTES: Capture ALL tracking statuses, warnings, or anomalies (e.g., "死不回", "待業主確認", "等待業主"). Append these heavily into "prep_gap_notes" or the task "title" so they are not lost.
 - DECISION ENGINE (Tasks): Calculate "risk_score" (0-100) based on urgency and unfulfilled promise risk.
 - DECISION ENGINE (Events): If a meeting lacks clear preparation materials, add "prep_gap_notes" to point out the missing items based on memories.
 - MEMORY GRAPH: For every memory, explicitly cite the "evidence_text" from the user's input, and classify "entity_type" as "person", "project", "preference", or "rule".
