@@ -60,7 +60,7 @@ jobs:
         if: env.ACTION == 'MORNING' || env.ACTION == 'MANUAL_ALL'
         run: |
           curl -X POST \
-            -H "x-cron-token: meeting-flow-morning-2026" \
+            -H "x-cron-token: ${{ secrets.CRON_SECRET }}" \
             --max-time 120 \
             --fail \
             https://meeting-flow-backend-1.onrender.com/api/cron/morning || true
@@ -69,7 +69,7 @@ jobs:
         if: env.ACTION == 'NUDGING' || env.ACTION == 'MANUAL_ALL'
         run: |
           curl -X POST \
-            -H "x-cron-token: meeting-flow-morning-2026" \
+            -H "x-cron-token: ${{ secrets.CRON_SECRET }}" \
             --max-time 120 \
             --fail \
             https://meeting-flow-backend-1.onrender.com/api/cron/nudging || true
@@ -78,7 +78,7 @@ jobs:
         if: env.ACTION == 'EVENING' || env.ACTION == 'MANUAL_ALL'
         run: |
           curl -X POST \
-            -H "x-cron-token: meeting-flow-morning-2026" \
+            -H "x-cron-token: ${{ secrets.CRON_SECRET }}" \
             --max-time 120 \
             --fail \
             https://meeting-flow-backend-1.onrender.com/api/cron/evening || true
@@ -87,7 +87,7 @@ jobs:
         if: env.ACTION == 'WEEKLY' || env.ACTION == 'MANUAL_ALL'
         run: |
           curl -X POST \
-            -H "x-cron-token: meeting-flow-morning-2026" \
+            -H "x-cron-token: ${{ secrets.CRON_SECRET }}" \
             --max-time 120 \
             --fail \
             https://meeting-flow-backend-1.onrender.com/api/cron/weekly || true
