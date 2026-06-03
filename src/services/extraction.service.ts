@@ -9,7 +9,18 @@ import { createDecisionLog } from './decision-logger.service';
 import { loadPlaybookRules, buildPlaybookPrompt } from './playbook.service';
 import { calculateRiskScore, detectPrepGap } from './strategy.service';
 
-export async function processExtractionJob(userId: string, chatId: number, text: string, batchId: string, voiceFileId?: string | null, thinkingMessageId?: number | null) {\n  const reply = async (msg: string, buttons?: any) => { if (thinkingMessageId) { try { await editTelegramMessage(chatId, thinkingMessageId, msg, buttons); return; } catch (e) { console.error(e); } } await reply(msg, buttons); };
+export async function processExtractionJob(userId: string, chatId: number, text: string, batchId: string, voiceFileId?: string | null, thinkingMessageId?: number | null) {
+  const reply = async (msg: string, buttons?: any) => { 
+    if (thinkingMessageId) { 
+      try { 
+        await editTelegramMessage(chatId, thinkingMessageId, msg, buttons); 
+        return; 
+      } catch (e) { 
+        console.error(e); 
+      } 
+    } 
+    await sendTelegram(chatId, msg, buttons); 
+  };
   try {
     let inputText = text;
     if (voiceFileId) {

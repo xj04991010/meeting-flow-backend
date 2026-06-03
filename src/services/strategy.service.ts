@@ -1,7 +1,7 @@
 // This service provides business logic for calculating task risk scores and event prep gaps.
 // We can use it to post-process AI outputs, or feed its context into the AI prompt.
 
-export function calculateRiskScore(task: { due_at?: string | null, priority?: string }): number {
+export function calculateRiskScore(task: { due_at?: string | null, priority?: string | null }): number {
   let score = 0;
   
   // 1. Priority base score
