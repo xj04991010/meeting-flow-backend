@@ -232,11 +232,12 @@ app.get('/api/dashboard/weekly', async (c) => {
   const todayStr = getTaipeiDate(now);
   const todayTime = new Date(todayStr).getTime();
 
-  // 準備周曆 Buckets (今天 到 未來六天，共七格滾動視圖)
+  // 準備周曆 Buckets (前天、昨天、今天 到 未來四天，共七格，或九格)
+  // 依據使用者需求，加入前兩天
   const bucketsMap = new Map();
   const WEEKDAYS_ZH = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
 
-  for (let i = 0; i < 7; i++) {
+  for (let i = -2; i < 7; i++) {
     const currentDay = new Date(now);
     currentDay.setDate(now.getDate() + i);
     const dStr = getTaipeiDate(currentDay);
@@ -244,6 +245,8 @@ app.get('/api/dashboard/weekly', async (c) => {
     
     let label = isToday ? '今天' : WEEKDAYS_ZH[currentDay.getDay()];
     if (i === 1) label = '明天';
+    if (i === -1) label = '昨天';
+    if (i === -2) label = '前天';
 
     bucketsMap.set(dStr, {
       date: dStr,
