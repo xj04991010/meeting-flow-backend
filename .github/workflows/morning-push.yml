@@ -1,19 +1,78 @@
-name: Daily Morning Briefing
+name: Daily AI Assistant Cron Jobs
 
 on:
   schedule:
-    # Runs at 01:00 UTC every day, which is 09:00 AM Taipei Time (UTC+8)
+    # --- Wake up pings (10 minutes before actual jobs) ---
+    # 00:50 UTC = 08:50 Taipei
+    - cron: '50 0 * * *'
+    # 06:50 UTC = 14:50 Taipei
+    - cron: '50 6 * * *'
+    # 11:50 UTC = 19:50 Taipei
+    - cron: '50 11 * * *'
+    
+    # --- Actual Cron Jobs ---
+    # Morning Briefing: 01:00 UTC = 09:00 Taipei
     - cron: '0 1 * * *'
+    # Afternoon Nudging: 07:00 UTC = 15:00 Taipei
+    - cron: '0 7 * * *'
+    # Evening Report: 12:00 UTC = 20:00 Taipei
+    - cron: '0 12 * * *'
+  
   workflow_dispatch: # Allows manual triggering from GitHub UI
 
 jobs:
-  trigger_push:
+  run_crons:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Morning Push API
+      - name: Calculate Time and Determine Action
+        id: cron_action
+        run: |
+          HOUR=$(date -u +"%H")
+          MINUTE=$(date -u +"%M")
+          
+          if [ "$MINUTE" = "50" ]; then
+            echo "ACTION=WAKE_UP" >> $GITHUB_ENV
+            echo "Endpoint: GET /"
+          elif [ "$HOUR" = "01" ]; then
+            echo "ACTION=MORNING" >> $GITHUB_ENV
+            echo "Endpoint: POST /api/cron/morning"
+          elif [ "$HOUR" = "07" ]; then
+            echo "ACTION=NUDGING" >> $GITHUB_ENV
+            echo "Endpoint: POST /api/cron/nudging"
+          elif [ "$HOUR" = "12" ]; then
+            echo "ACTION=EVENING" >> $GITHUB_ENV
+            echo "Endpoint: POST /api/cron/evening"
+          else
+            echo "ACTION=MANUAL_ALL" >> $GITHUB_ENV
+          fi
+
+      - name: Execute Wake Up Ping
+        if: env.ACTION == 'WAKE_UP'
+        run: curl -s https://meeting-flow-backend-1.onrender.com/ > /dev/null
+
+      - name: Execute Morning Briefing
+        if: env.ACTION == 'MORNING' || env.ACTION == 'MANUAL_ALL'
         run: |
           curl -X POST \
             -H "x-cron-token: meeting-flow-morning-2026" \
             --max-time 120 \
             --fail \
             https://meeting-flow-backend-1.onrender.com/api/cron/morning
+
+      - name: Execute Afternoon Nudging
+        if: env.ACTION == 'NUDGING' || env.ACTION == 'MANUAL_ALL'
+        run: |
+          curl -X POST \
+            -H "x-cron-token: meeting-flow-morning-2026" \
+            --max-time 120 \
+            --fail \
+            https://meeting-flow-backend-1.onrender.com/api/cron/nudging
+
+      - name: Execute Evening Report
+        if: env.ACTION == 'EVENING' || env.ACTION == 'MANUAL_ALL'
+        run: |
+          curl -X POST \
+            -H "x-cron-token: meeting-flow-morning-2026" \
+            --max-time 120 \
+            --fail \
+            https://meeting-flow-backend-1.onrender.com/api/cron/evening

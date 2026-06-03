@@ -136,6 +136,38 @@ app.post('/api/cron/morning', async (c) => {
   return c.json({ ok: true, message: 'Morning push sent' });
 });
 
+app.post('/api/cron/nudging', async (c) => {
+  const token = c.req.header('x-cron-token');
+  if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  
+  const { handleNudgingCommand } = await import('./services/message-handler.service');
+  const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
+  
+  if (users) {
+    for (const user of users) {
+      await handleNudgingCommand(user.telegram_chat_id, user.id);
+    }
+  }
+  
+  return c.json({ ok: true, message: 'Nudging push sent' });
+});
+
+app.post('/api/cron/evening', async (c) => {
+  const token = c.req.header('x-cron-token');
+  if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  
+  const { handleEveningCommand } = await import('./services/message-handler.service');
+  const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
+  
+  if (users) {
+    for (const user of users) {
+      await handleEveningCommand(user.telegram_chat_id, user.id);
+    }
+  }
+  
+  return c.json({ ok: true, message: 'Evening push sent' });
+});
+
 // GET /api/documents - Get deep research documents
 app.get('/api/documents', async (c) => {
   const userId = c.get('userId');
