@@ -7,29 +7,29 @@ export const AiExtractionSchema = z.object({
     "MEMORY_EXTRACTION",
     "CONVERSATIONAL_RESPONSE",
   ]),
-  confidence: z.number().min(0).max(1),
-  reasoning_summary: z.string(),
+  confidence: z.coerce.number().min(0).max(1).catch(0.9),
+  reasoning_summary: z.string().catch(''),
   tasks: z.array(z.object({
     title: z.string(),
-    due_at: z.string().nullable(),
-    priority: z.enum(["low", "medium", "high", "urgent"]),
-    category: z.string().nullable(),
-    risk_score: z.number().min(0).max(100).default(0),
-    prep_gap_notes: z.string().nullable().default(null)
-  })).default([]),
+    due_at: z.string().nullable().catch(null),
+    priority: z.string().nullable().catch('medium'),
+    category: z.string().nullable().catch(null),
+    risk_score: z.coerce.number().min(0).max(100).catch(0),
+    prep_gap_notes: z.string().nullable().catch(null)
+  })).catch([]).default([]),
   events: z.array(z.object({
     title: z.string(),
-    start_at: z.string().nullable(),
-    end_at: z.string().nullable(),
-    prep_gap_notes: z.string().nullable().default(null)
-  })).default([]),
+    start_at: z.string().nullable().catch(null),
+    end_at: z.string().nullable().catch(null),
+    prep_gap_notes: z.string().nullable().catch(null)
+  })).catch([]).default([]),
   memories: z.array(z.object({
     content: z.string(),
-    memory_type: z.enum(["preference", "habit", "constraint", "identity"]),
-    entity_type: z.enum(["person", "project", "preference", "rule"]).default("preference"),
-    importance: z.number().min(1).max(5),
-    evidence_text: z.string().nullable().default(null)
-  })).default([]),
+    memory_type: z.string().catch('preference'),
+    entity_type: z.string().catch('preference'),
+    importance: z.coerce.number().min(1).max(5).catch(3),
+    evidence_text: z.string().nullable().catch(null)
+  })).catch([]).default([]),
 });
 
 export type AiExtractionOutput = z.infer<typeof AiExtractionSchema>;

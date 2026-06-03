@@ -65,7 +65,8 @@ Output strictly valid JSON matching this schema:
     if (!content) throw new Error('LLM returned empty response.');
 
     // 4. Validate output
-    const rawJSON = JSON.parse(content);
+    const cleanContent = content.replace(/^```json\s*/, '').replace(/```\s*$/, '').trim();
+    const rawJSON = JSON.parse(cleanContent);
     const validation = AiExtractionSchema.safeParse(rawJSON);
 
     if (!validation.success) {

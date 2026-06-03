@@ -415,11 +415,23 @@ export function booleanOrUndefined(value: unknown) {
 
 
 
+const userCommandCache = new Map<string, number>();
+
 export async function processTelegramUpdate(message: any) {
   const chatId = message.chat?.id;
   let text = message.text?.trim();
   
   if (!chatId) return;
+
+  if (text) {
+    const cacheKey = `${chatId}_${text}`;
+    const lastTime = userCommandCache.get(cacheKey) || 0;
+    if (Date.now() - lastTime < 3000) {
+      console.log(`[RateLimit] Dropping repeated command from ${chatId}: ${text}`);
+      return;
+    }
+    userCommandCache.set(cacheKey, Date.now());
+  }
 
   let existingThinkingMessageId: number | null = null;
 
@@ -847,10 +859,11 @@ async function handleWeekCommand(chatId: number, userId: string) {
 
   if (events && events.length > 0) {
     lines.push('📅 **未來一週行程**：');
-    events.forEach(e => {
+    events.slice(0, 5).forEach(e => {
       const timeStr = new Date(e.start_time).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       lines.push(`• [${timeStr}] ${e.title}`);
     });
+    if (events.length > 5) lines.push(`*(還有 ${events.length - 5} 個行程，請至 Dashboard 查看)*`);
     lines.push('');
   } else {
     lines.push('📅 未來一週沒有安排行程。\n');
@@ -858,9 +871,10 @@ async function handleWeekCommand(chatId: number, userId: string) {
 
   if (pendingTasks.length > 0) {
     lines.push('✅ **未完成待辦清單**：');
-    pendingTasks.forEach(t => {
+    pendingTasks.slice(0, 5).forEach(t => {
       lines.push(`• ${t.title}`);
     });
+    if (pendingTasks.length > 5) lines.push(`*(還有 ${pendingTasks.length - 5} 項待辦，請至 Dashboard 查看)*`);
   } else {
     lines.push('✅ 目前沒有未完成的待辦！');
   }
