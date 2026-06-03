@@ -619,8 +619,8 @@ select:focus {
 }
 
 .day-column.is-today {
-  border-color: var(--accent-line);
-  box-shadow: 0 0 0 1px var(--accent-line), 0 12px 38px rgba(50, 209, 179, 0.08);
+  border-color: var(--warning);
+  box-shadow: 0 0 0 1px var(--warning), 0 12px 38px rgba(215, 170, 87, 0.15);
 }
 
 .day-column.drag-over {

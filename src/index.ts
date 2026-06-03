@@ -232,32 +232,28 @@ app.get('/api/dashboard/weekly', async (c) => {
   const todayStr = getTaipeiDate(now);
   const todayTime = new Date(todayStr).getTime();
 
-  // 準備周曆 Buckets (-1 昨天, 0 今天, 1 明天, 2 後天, 3 大後天, 99 未來)
+  // 準備周曆 Buckets (週一 到 週日)
   const bucketsMap = new Map();
-  const addDays = (d: Date, days: number) => {
-    const nd = new Date(d);
-    nd.setDate(nd.getDate() + days);
-    return nd;
-  };
-  
-  const labels: Record<string, string> = {
-    '-1': '昨天',
-    '0': '今天',
-    '1': '明天',
-    '2': '後天',
-    '3': '大後天',
-    '4': '四天後',
-    '5': '五天後',
-    '6': '六天後',
-    '7': '七天後'
-  };
+  const dayOfWeek = now.getDay() || 7; // 1-7 (Mon-Sun)
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - dayOfWeek + 1);
 
-  for (let i = -1; i <= 7; i++) {
-    const dStr = getTaipeiDate(addDays(now, i));
+  const WEEKDAYS_ZH = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+
+  for (let i = 0; i < 7; i++) {
+    const currentDay = new Date(monday);
+    currentDay.setDate(monday.getDate() + i);
+    const dStr = getTaipeiDate(currentDay);
+    const isToday = dStr === todayStr;
+    
+    let label = isToday ? '今天' : WEEKDAYS_ZH[currentDay.getDay()];
+    if (dStr === getTaipeiDate(new Date(now.getTime() - 86400000))) label = '昨天';
+    if (dStr === getTaipeiDate(new Date(now.getTime() + 86400000))) label = '明天';
+
     bucketsMap.set(dStr, {
       date: dStr,
-      label: labels[i.toString()],
-      is_today: i === 0,
+      label: label,
+      is_today: isToday,
       tasks: [],
       events: []
     });
