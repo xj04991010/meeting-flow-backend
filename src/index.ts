@@ -1,3 +1,9 @@
+import { routeIntent } from './services/intent-router.service';
+
+import { handleMorningCommand } from './services/command-handlers/morning.handler';
+import { handleNudgingCommand } from './services/command-handlers/nudging.handler';
+import { handleEveningCommand } from './services/command-handlers/evening.handler';
+
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -110,7 +116,7 @@ import {
   nullableText, 
   nullableDate, 
   booleanOrUndefined, 
-  routeIntent, 
+   
   extractMeetingData, 
   extractSupplementData, 
   persistExtraction 
@@ -139,7 +145,7 @@ app.post('/api/cron/morning', async (c) => {
   if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
   if (!(await acquireCronLock('morning'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
-  const { handleMorningCommand } = await import('./services/message-handler.service');
+  const { handleMorningCommand } = await import('./services/command-handlers/morning.handler');
   const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
   
   if (users) {
@@ -156,7 +162,7 @@ app.post('/api/cron/nudging', async (c) => {
   if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
   if (!(await acquireCronLock('nudging'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
-  const { handleNudgingCommand } = await import('./services/message-handler.service');
+  const { handleNudgingCommand } = await import('./services/command-handlers/nudging.handler');
   const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
   
   if (users) {
@@ -184,7 +190,7 @@ app.post('/api/cron/evening', async (c) => {
   if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
   if (!(await acquireCronLock('evening'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
-  const { handleEveningCommand } = await import('./services/message-handler.service');
+  const { handleEveningCommand } = await import('./services/command-handlers/evening.handler');
   const { data: users } = await supabase.from('users').select('id, telegram_chat_id').not('telegram_chat_id', 'is', null);
   
   if (users) {
