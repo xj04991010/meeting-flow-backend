@@ -18,6 +18,24 @@ export async function processConfirmationJob(userId: string, chatId: number, cal
       return;
     }
 
+    if (data.startsWith('undo_batch_')) {
+      const batchId = data.replace('undo_batch_', '');
+      await handleUndoBatch(userId, chatId, callbackId, batchId, messageId);
+      return;
+    }
+
+    if (data.startsWith('undo_update_')) {
+      const batchId = data.replace('undo_update_', '');
+      await handleUndoUpdate(userId, chatId, callbackId, batchId, messageId);
+      return;
+    }
+
+    if (data.startsWith('undo_delete_')) {
+      const batchId = data.replace('undo_delete_', '');
+      await handleUndoDelete(userId, chatId, callbackId, batchId, messageId);
+      return;
+    }
+
     if (data.startsWith('delete_task_')) {
       const taskId = data.replace('delete_task_', '');
       await supabase.from('tasks').delete().eq('id', taskId).eq('user_id', userId);
@@ -291,7 +309,59 @@ export async function autoConfirmBatch(userId: string, batchId: string, chatId: 
   }
 
   await updateSourceBatchSummary(batchId, 'Auto-confirmed items due to high confidence.');
-  
-  await sendTelegram(chatId, `⚡ **已為您自動執行**\n\n已成功將 ${candidates.length} 項排程與任務直接寫入系統與日曆，無需確認。`);
   return true;
+}
+
+async function handleUndoBatch(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {
+  await supabase.from('tasks').delete().eq('source_batch_id', batchId).eq('user_id', userId);
+  await supabase.from('calendar_intents').delete().eq('source_batch_id', batchId).eq('user_id', userId);
+  await supabase.from('memories').delete().eq('source_batch_id', batchId).eq('user_id', userId);
+  
+  const { data: dLog } = await supabase.from('decision_logs').select('id, selected_memories').eq('source_batch_id', batchId).single();
+  if (dLog) {
+    await updateDecisionLogByBatchId(batchId, 'rejected');
+    if (dLog.selected_memories) {
+      for (const memId of dLog.selected_memories) {
+        await penalizeMemory(memId);
+      }
+    }
+  }
+  
+  await supabase.from('ai_candidates').update({ status: 'ignored' }).eq('source_batch_id', batchId);
+  await updateSourceBatchSummary(batchId, 'Undone by user.');
+
+  await editTelegramMessage(chatId, messageId, '↩️ 已撤銷本次新增，資料已乾淨清除。');
+  await answerCallbackQuery(callbackId, '撤銷成功！');
+}
+
+async function handleUndoUpdate(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {
+  const { data: candidates } = await supabase.from('ai_candidates').select('*').eq('source_batch_id', batchId).eq('candidate_type', 'UNDO_UPDATE_TASK');
+  if (candidates && candidates.length > 0) {
+    for (const c of candidates) {
+      const p = c.payload as any;
+      if (p.old_status) {
+        await supabase.from('tasks').update({ status: p.old_status }).eq('id', p.task_id).eq('user_id', userId);
+      } else if (p.old_deadline) {
+        await supabase.from('tasks').update({ deadline: p.old_deadline }).eq('id', p.task_id).eq('user_id', userId);
+      }
+    }
+    await supabase.from('ai_candidates').update({ status: 'ignored' }).eq('source_batch_id', batchId);
+  }
+  await editTelegramMessage(chatId, messageId, '↩️ 已撤銷修改，任務恢復原狀。');
+  await answerCallbackQuery(callbackId, '撤銷修改成功！');
+}
+
+async function handleUndoDelete(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {
+  const { data: candidates } = await supabase.from('ai_candidates').select('*').eq('source_batch_id', batchId).eq('candidate_type', 'UNDO_DELETE_TASK');
+  if (candidates && candidates.length > 0) {
+    for (const c of candidates) {
+      const p = c.payload as any;
+      if (p.task) {
+        await supabase.from('tasks').insert(p.task);
+      }
+    }
+    await supabase.from('ai_candidates').update({ status: 'ignored' }).eq('source_batch_id', batchId);
+  }
+  await editTelegramMessage(chatId, messageId, '♻️ 已復原刪除，任務滿血復活。');
+  await answerCallbackQuery(callbackId, '復原刪除成功！');
 }

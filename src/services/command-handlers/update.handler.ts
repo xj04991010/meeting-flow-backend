@@ -49,14 +49,14 @@ Output JSON only:
     return;
   }
 
-  // Create a batch for Dry Run
+  // Create a batch for Undo
   const batchId = await createSourceBatch(userId, `[Batch Update] ${text}`);
   if (!batchId) {
     await editTelegramMessage(chatId, thinkingId, `⚠️ 系統錯誤，無法建立更新草稿。`);
     return;
   }
 
-  let replyText = `⚡ **準備修改任務** (請確認)\n\n`;
+  let replyText = `⚡ **已為您自動修改任務**\n\n`;
   const candidates = [];
 
   for (const t of matchedTasks) {
@@ -65,26 +65,29 @@ Output JSON only:
       candidates.push({
         user_id: userId,
         source_batch_id: batchId,
-        candidate_type: 'UPDATE_TASK',
-        payload: { task_id: t.id, action: 'complete' }
+        candidate_type: 'UNDO_UPDATE_TASK',
+        payload: { task_id: t.id, old_status: 'pending' }
       });
+      // Execute immediately
+      await supabase.from('tasks').update({ status: 'completed' }).eq('id', t.id).eq('user_id', userId);
     } else if (updateAction === 'reschedule' && newDeadlineIso) {
       const dateStr = new Date(newDeadlineIso).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       replyText += `🕒 [改期至 ${dateStr}] ${t.title}\n`;
       candidates.push({
         user_id: userId,
         source_batch_id: batchId,
-        candidate_type: 'UPDATE_TASK',
-        payload: { task_id: t.id, action: 'reschedule', new_deadline: newDeadlineIso }
+        candidate_type: 'UNDO_UPDATE_TASK',
+        payload: { task_id: t.id, old_deadline: t.deadline }
       });
+      // Execute immediately
+      await supabase.from('tasks').update({ deadline: newDeadlineIso }).eq('id', t.id).eq('user_id', userId);
     }
   }
 
   await supabase.from('ai_candidates').insert(candidates);
 
   const buttons = [
-    [{ text: '✅ 確認執行', callback_data: `sync_batch_${batchId}` }],
-    [{ text: '❌ 撤回取消', callback_data: `reject_batch_${batchId}` }]
+    [{ text: '❌ 撤銷修改 (Undo)', callback_data: `undo_update_${batchId}` }]
   ];
 
   await editTelegramMessage(chatId, thinkingId, replyText, buttons);
