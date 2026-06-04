@@ -21,6 +21,7 @@ export async function processExtractionJob(userId: string, chatId: number, text:
     } 
     await sendTelegram(chatId, msg, buttons); 
   };
+  const startedAt = Date.now();
   try {
     let inputText = text;
     if (voiceFileId) {
@@ -44,14 +45,14 @@ export async function processExtractionJob(userId: string, chatId: number, text:
     const playbookPrompt = buildPlaybookPrompt(rules);
 
     // 2. Build Prompt
-    const systemPrompt = `You are a professional, highly capable, and warm Personal Secretary.
+    const systemPrompt = `You are a highly efficient, blunt, and extremely professional Executive Assistant (INTJ persona).
 Current Datetime (Asia/Taipei): ${todayStr}
 ${memoryContext}
 ${playbookPrompt}
 
 Analyze the user input.
 - If the user asks about their schedule, tasks, or calendar (e.g. "本周代辦", "今天有什麼事"), output type "CONVERSATIONAL_RESPONSE" and reply with EXACTLY: "👉 查詢行程與待辦，請直接點擊輸入框旁邊的「/」選單，選擇 /week (本週摘要) 或 /morning (晨間簡報) 喔！".
-- If the user is otherwise chatting, asking questions, or greeting you, output type "CONVERSATIONAL_RESPONSE" and provide a helpful, natural, and friendly reply in reasoning_summary.
+- If the user is otherwise chatting, asking questions, or greeting you, output type "CONVERSATIONAL_RESPONSE" and provide a brief, logical, and blunt reply in reasoning_summary. DO NOT be overly polite.
 - If it contains actionable items, output "TASK_EXTRACTION" or "EVENT_EXTRACTION".
 - If the user mentions personal habits, constraints, or identity rules, output "MEMORY_EXTRACTION".
 - TASK EXTRACTION RULES: 
@@ -68,7 +69,8 @@ Output strictly valid JSON matching this schema:
 {
   "type": "TASK_EXTRACTION" | "EVENT_EXTRACTION" | "MEMORY_EXTRACTION" | "CONVERSATIONAL_RESPONSE",
   "confidence": number (0.0 to 1.0),
-  "reasoning_summary": "Your conversational reply or logical summary. Use Traditional Chinese and be polite and professional.",
+  "reasoning_summary": "Your brief analytical summary in Traditional Chinese (Taiwanese context). NO polite greetings, be blunt and precise.",
+  "memory_applied_log": ["If you applied any rules from User Memories, list them here, e.g., '已知偏好：週五不排會，已改至週四'"],
   "tasks": [ { "title": "...", "due_at": "ISO-8601 or null", "priority": "low|medium|high|urgent", "category": "${catsSchema}", "risk_score": 0, "prep_gap_notes": "null or string" } ],
   "events": [ { "title": "...", "start_at": "ISO-8601", "end_at": "ISO-8601 or null", "prep_gap_notes": "null or string" } ],
   "memories": [ { "content": "...", "memory_type": "preference|habit|constraint|identity", "entity_type": "person|project|preference|rule", "importance": 1 to 5, "evidence_text": "..." } ]
@@ -154,12 +156,18 @@ Output strictly valid JSON matching this schema:
     }
 
     // Low confidence: Send Inline Keyboard Confirmation (Preview Mode)
-    const summaryMsg = `📊 **萃取報告**\n\n${output.reasoning_summary}\n\n已攔截：${output.tasks.length} 任務, ${output.events.length} 行程, ${output.memories.length} 記憶。\n\n⚠️ 狀態：等待您的確認。未經確認不會寫入正式資料庫。`;
+    let memoryStr = '';
+    if (output.memory_applied_log && output.memory_applied_log.length > 0) {
+      memoryStr = `\n\n🧠 **記憶套用軌跡**：\n` + output.memory_applied_log.map((m: string) => `• ${m}`).join('\n');
+    }
+
+    const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+    const summaryMsg = `📊 **萃取報告**\n\n${output.reasoning_summary}${memoryStr}\n\n已攔截：${output.tasks.length} 任務, ${output.events.length} 行程, ${output.memories.length} 記憶。\n\n⚠️ 狀態：等待您的確認。未經確認不會寫入正式資料庫。\n\n⏱️ 運算耗時：${seconds} 秒`;
     
     await reply(summaryMsg, [
-      [{ text: '✅ 確認全部 (Confirm All)', callback_data: `confirm_all:${batchId}` }],
-      [{ text: '🔍 進入儀表板細部修改', url: `https://meeting-flow-backend-1.onrender.com?uid=${userId}&batch=${batchId}` }],
-      [{ text: '🗑️ 忽略丟棄 (Ignore)', callback_data: `ignore:${batchId}` }]
+      [{ text: '✅ 全部確認並同步', callback_data: `sync_batch_${batchId}` }],
+      [{ text: '❌ 辨識錯誤，放棄此筆紀錄', callback_data: `reject_batch_${batchId}` }],
+      [{ text: '🔍 進入儀表板細部修改', url: `https://meeting-flow-backend-1.onrender.com?uid=${userId}&batch=${batchId}` }]
     ]);
 
   } catch (err: any) {

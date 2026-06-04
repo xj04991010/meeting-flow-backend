@@ -1,6 +1,7 @@
 import { supabase } from '../../utils/db';
 import { editTelegramMessage } from '../telegram.service';
 import { callLLM } from '../llm.service';
+import { createSourceBatch } from '../../repositories/source-batches.repo';
 
 export async function handleUpdateTasksCommand(
   chatId: number, 
@@ -41,13 +42,50 @@ Output JSON only:
     return;
   }
 
-  if (updateAction === 'complete') {
-    await supabase.from('tasks').update({ status: 'completed' }).in('id', task_ids_to_update);
-    await editTelegramMessage(chatId, thinkingId, `✅ 已為您將 ${task_ids_to_update.length} 項任務標記為完成！`);
-  } else if (updateAction === 'reschedule' && newDeadlineIso) {
-    await supabase.from('tasks').update({ deadline: newDeadlineIso }).in('id', task_ids_to_update);
-    await editTelegramMessage(chatId, thinkingId, `✅ 已為您將 ${task_ids_to_update.length} 項任務重新安排期限！`);
-  } else {
+  const matchedTasks = tasks.filter(t => task_ids_to_update.includes(t.id));
+  
+  if (updateAction !== 'complete' && updateAction !== 'reschedule') {
     await editTelegramMessage(chatId, thinkingId, `⚠️ 抱歉，我無法確定確切的更新時間，請再試一次。`);
+    return;
   }
+
+  // Create a batch for Dry Run
+  const batchId = await createSourceBatch(userId, `[Batch Update] ${text}`);
+  if (!batchId) {
+    await editTelegramMessage(chatId, thinkingId, `⚠️ 系統錯誤，無法建立更新草稿。`);
+    return;
+  }
+
+  let replyText = `⚡ **準備修改任務** (請確認)\n\n`;
+  const candidates = [];
+
+  for (const t of matchedTasks) {
+    if (updateAction === 'complete') {
+      replyText += `✅ [標記完成] ${t.title}\n`;
+      candidates.push({
+        user_id: userId,
+        source_batch_id: batchId,
+        candidate_type: 'UPDATE_TASK',
+        payload: { task_id: t.id, action: 'complete' }
+      });
+    } else if (updateAction === 'reschedule' && newDeadlineIso) {
+      const dateStr = new Date(newDeadlineIso).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      replyText += `🕒 [改期至 ${dateStr}] ${t.title}\n`;
+      candidates.push({
+        user_id: userId,
+        source_batch_id: batchId,
+        candidate_type: 'UPDATE_TASK',
+        payload: { task_id: t.id, action: 'reschedule', new_deadline: newDeadlineIso }
+      });
+    }
+  }
+
+  await supabase.from('ai_candidates').insert(candidates);
+
+  const buttons = [
+    [{ text: '✅ 確認執行', callback_data: `sync_batch_${batchId}` }],
+    [{ text: '❌ 撤回取消', callback_data: `reject_batch_${batchId}` }]
+  ];
+
+  await editTelegramMessage(chatId, thinkingId, replyText, buttons);
 }

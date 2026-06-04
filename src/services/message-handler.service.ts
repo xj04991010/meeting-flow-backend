@@ -606,6 +606,7 @@ export async function processTelegramUpdate(message: any) {
       if (batchSummary.taskCount > 0 || batchSummary.eventCount > 0) {
         buttons = [
           [{ text: '✅ 全部確認並同步', callback_data: `sync_batch_${batchSummary.batchId}` }],
+          [{ text: '❌ 放棄此筆補充', callback_data: `reject_batch_${batchSummary.batchId}` }],
           [{ text: '打開 Dashboard 修改細節', url: getDashboardUrl(userId) }]
         ];
       }
@@ -618,10 +619,8 @@ export async function processTelegramUpdate(message: any) {
     const result = await extractMeetingData(userId, text);
     const batchSummary = await persistExtraction(userId, text, result);
 
-    const seconds = Math.round((Date.now() - startedAt) / 1000);
-    const reply = isShort 
-      ? buildTelegramSummary(userId, result, batchSummary) 
-      : `${buildTelegramSummary(userId, result, batchSummary)}\n\n⏱️ 耗時：約 ${seconds} 秒`;
+    const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+    const reply = `${buildTelegramSummary(userId, result, batchSummary)}\n\n⏱️ 運算耗時：${seconds} 秒`;
 
     let buttons: TelegramButton[][] | undefined = undefined;
     const taskIds = batchSummary.taskIds as string[];
@@ -635,6 +634,7 @@ export async function processTelegramUpdate(message: any) {
       buttons = [
         [{ text: '✅ 全部確認並同步', callback_data: `sync_batch_${batchSummary.batchId}` }]
       ];
+      buttons.push([{ text: '❌ 辨識錯誤，放棄此筆紀錄', callback_data: `reject_batch_${batchSummary.batchId}` }]);
       if (batchSummary.memoryCount && batchSummary.memoryCount > 0) {
         buttons.push([{ text: '🧠 查看已存入的長期記憶', callback_data: 'view_memory' }]);
       }

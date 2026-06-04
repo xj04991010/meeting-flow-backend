@@ -9,6 +9,7 @@ export const AiExtractionSchema = z.object({
   ]),
   confidence: z.coerce.number().min(0).max(1).catch(0.9),
   reasoning_summary: z.string().catch(''),
+  memory_applied_log: z.array(z.string()).catch([]).default([]),
   tasks: z.array(z.object({
     title: z.string(),
     due_at: z.string().nullable().catch(null),

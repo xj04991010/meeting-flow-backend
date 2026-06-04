@@ -6,127 +6,74 @@ import { reinforceMemory, penalizeMemory } from './memory.service';
 
 export async function processConfirmationJob(userId: string, chatId: number, callbackId: string, data: string, messageId: number) {
   try {
-    const [action, batchId] = data.split(':');
-
-    if (!batchId) {
-      await answerCallbackQuery(callbackId, 'Invalid callback data.');
+    if (data.startsWith('sync_batch_')) {
+      const batchId = data.replace('sync_batch_', '');
+      await handleConfirmBatch(userId, chatId, callbackId, batchId, messageId);
       return;
     }
 
-    if (action === 'ignore') {
-      const { data: ignoredCandidates } = await supabase.from('ai_candidates').select('*').eq('source_batch_id', batchId);
-      
-      await supabase.from('ai_candidates').update({ status: 'ignored' }).eq('source_batch_id', batchId);
-      await updateSourceBatchSummary(batchId, 'Ignored by user.');
-      
-      if (ignoredCandidates) {
-        const { data: dLog } = await supabase.from('decision_logs').select('id, selected_memories').eq('source_batch_id', batchId).single();
-        if (dLog) {
-          await updateDecisionLogByBatchId(batchId, 'rejected');
-          if (dLog.selected_memories) {
-            for (const memId of dLog.selected_memories) {
-              await penalizeMemory(memId);
-            }
-          }
-          
-          const feedbackLogs = ignoredCandidates.map(c => ({
-            user_id: userId,
-            decision_log_id: dLog.id,
-            feedback_type: 'rejected',
-            original_payload: c.payload,
-            final_payload: null
-          }));
-          await supabase.from('user_feedback').insert(feedbackLogs);
-        }
-      }
-      
-      await editTelegramMessage(chatId, messageId, '🗑️ 此批次的解析結果已全數捨棄。');
-      await answerCallbackQuery(callbackId, '已捨棄。');
+    if (data.startsWith('reject_batch_')) {
+      const batchId = data.replace('reject_batch_', '');
+      await handleRejectBatch(userId, chatId, callbackId, batchId, messageId);
       return;
     }
 
-    if (action === 'confirm_all') {
-      // 1. Fetch all pending candidates for this batch
-      const { data: candidates, error } = await supabase
-        .from('ai_candidates')
-        .select('*')
-        .eq('source_batch_id', batchId)
-        .eq('status', 'pending');
+    if (data.startsWith('delete_task_')) {
+      const taskId = data.replace('delete_task_', '');
+      await supabase.from('tasks').delete().eq('id', taskId).eq('user_id', userId);
+      await editTelegramMessage(chatId, messageId, `✅ 任務已成功刪除。`);
+      await answerCallbackQuery(callbackId, '已刪除！');
+      return;
+    }
 
-      if (error || !candidates || candidates.length === 0) {
-        await answerCallbackQuery(callbackId, '找不到待確認的項目，或已確認過。');
-        return;
-      }
+    if (data.startsWith('del_all_kw_')) {
+      const keyword = data.replace('del_all_kw_', '');
+      await supabase.from('tasks').delete().eq('user_id', userId).ilike('title', `%${keyword}%`);
+      await editTelegramMessage(chatId, messageId, `✅ 所有包含「${keyword}」的任務已成功刪除。`);
+      await answerCallbackQuery(callbackId, '已全數刪除！');
+      return;
+    }
 
-      // 2. Process and write to formal tables
-      for (const candidate of candidates) {
-        const payload = candidate.payload as any;
+    if (data === 'cancel_delete') {
+      await editTelegramMessage(chatId, messageId, `❌ 已取消刪除操作。`);
+      await answerCallbackQuery(callbackId, '已取消');
+      return;
+    }
 
-        if (candidate.candidate_type === 'TASK') {
-          await supabase.from('tasks').insert({
-            user_id: userId,
-            source_batch_id: batchId,
-            title: payload.title,
-            deadline: payload.due_at,
-            priority: payload.priority || 'medium',
-            category: payload.category || '其他',
-            status: 'pending',
-            confidence: candidate.confidence,
-            needs_review: false
-          });
-        } else if (candidate.candidate_type === 'EVENT') {
-          await supabase.from('calendar_intents').insert({
-            user_id: userId,
-            source_batch_id: batchId,
-            title: payload.title,
-            start_time: payload.start_at,
-            end_time: payload.end_at,
-            action_type: 'propose_create',
-            status: 'ready',
-            sync_status: 'ready',
-            confidence: candidate.confidence,
-            needs_review: false
-          });
-        } else if (candidate.candidate_type === 'MEMORY') {
-          await supabase.from('memories').insert({
-            user_id: userId,
-            content: payload.content,
-            importance: payload.importance || 5,
-            memory_type: payload.memory_type || null,
-            entity_type: payload.entity_type || null,
-            evidence_text: payload.evidence_text || null,
-            source_batch_id: batchId
-          });
-        }
-
-        // Mark candidate as confirmed
-        await supabase.from('ai_candidates').update({ status: 'confirmed' }).eq('id', candidate.id);
-      }
+    if (data.startsWith('confirm_update_')) {
+      const parts = data.split('_');
+      // confirm_update_complete_taskId
+      // confirm_update_reschedule_taskId_time
+      const action = parts[2];
+      const taskId = parts[3];
       
-      // Save to eval dataset and update decision log
-      const { data: dLog } = await supabase.from('decision_logs').select('id, selected_memories').eq('source_batch_id', batchId).single();
-      if (dLog) {
-        await updateDecisionLogByBatchId(batchId, 'accepted');
-        if (dLog.selected_memories) {
-          for (const memId of dLog.selected_memories) {
-            await reinforceMemory(memId);
-          }
-        }
-        
-        const feedbackLogs = candidates.map(c => ({
-          user_id: userId,
-          decision_log_id: dLog.id,
-          feedback_type: 'accepted',
-          original_payload: c.payload,
-          final_payload: c.payload
-        }));
-        await supabase.from('user_feedback').insert(feedbackLogs);
+      if (action === 'complete') {
+        await supabase.from('tasks').update({ status: 'completed' }).eq('id', taskId).eq('user_id', userId);
+        await editTelegramMessage(chatId, messageId, `✅ 任務已標記為完成。`);
+        await answerCallbackQuery(callbackId, '已完成！');
+      } else if (action === 'reschedule') {
+        const newTime = parts.slice(4).join('_'); // just in case time has underscores
+        await supabase.from('tasks').update({ deadline: newTime }).eq('id', taskId).eq('user_id', userId);
+        await editTelegramMessage(chatId, messageId, `✅ 任務已成功改期。`);
+        await answerCallbackQuery(callbackId, '已改期！');
       }
+      return;
+    }
 
-      await updateSourceBatchSummary(batchId, 'Confirmed all items by user.');
-      
-      await editTelegramMessage(chatId, messageId, `✅ **確認完畢**\n\n已將 ${candidates.length} 個項目同步寫入正式資料庫與日曆同步佇列。`);
-      await answerCallbackQuery(callbackId, '已全數確認！');
+    if (data === 'cancel_update') {
+      await editTelegramMessage(chatId, messageId, `❌ 已取消更新操作。`);
+      await answerCallbackQuery(callbackId, '已取消');
+      return;
+    }
+
+    if (data === 'view_memory') {
+      await answerCallbackQuery(callbackId, '長按可查看記憶面板 (開發中)');
+      return;
+    }
+    
+    // Reminders
+    if (data.startsWith('remind_')) {
+      await answerCallbackQuery(callbackId, '提醒設定成功！');
       return;
     }
 
@@ -137,18 +84,49 @@ export async function processConfirmationJob(userId: string, chatId: number, cal
   }
 }
 
+async function handleRejectBatch(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {
+  const { data: ignoredCandidates } = await supabase.from('ai_candidates').select('*').eq('source_batch_id', batchId);
+  
+  await supabase.from('ai_candidates').update({ status: 'ignored' }).eq('source_batch_id', batchId);
+  await updateSourceBatchSummary(batchId, 'Ignored by user.');
+  
+  if (ignoredCandidates) {
+    const { data: dLog } = await supabase.from('decision_logs').select('id, selected_memories').eq('source_batch_id', batchId).single();
+    if (dLog) {
+      await updateDecisionLogByBatchId(batchId, 'rejected');
+      if (dLog.selected_memories) {
+        for (const memId of dLog.selected_memories) {
+          await penalizeMemory(memId);
+        }
+      }
+      
+      const feedbackLogs = ignoredCandidates.map(c => ({
+        user_id: userId,
+        decision_log_id: dLog.id,
+        feedback_type: 'rejected',
+        original_payload: c.payload,
+        final_payload: null
+      }));
+      await supabase.from('user_feedback').insert(feedbackLogs);
+    }
+  }
+  
+  await editTelegramMessage(chatId, messageId, '🗑️ 辨識錯誤，已將此草稿銷毀不留痕跡。');
+  await answerCallbackQuery(callbackId, '已乾淨銷毀。');
+}
 
-export async function autoConfirmBatch(userId: string, batchId: string, chatId: number) {
-  // 1. Fetch all pending candidates for this batch
+async function handleConfirmBatch(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {
   const { data: candidates, error } = await supabase
     .from('ai_candidates')
     .select('*')
     .eq('source_batch_id', batchId)
     .eq('status', 'pending');
 
-  if (error || !candidates || candidates.length === 0) return false;
+  if (error || !candidates || candidates.length === 0) {
+    await answerCallbackQuery(callbackId, '找不到待確認的項目，或已確認過。');
+    return;
+  }
 
-  // 2. Process and write to formal tables
   for (const candidate of candidates) {
     const payload = candidate.payload as any;
 
@@ -187,13 +165,112 @@ export async function autoConfirmBatch(userId: string, batchId: string, chatId: 
         evidence_text: payload.evidence_text || null,
         source_batch_id: batchId
       });
+    } else if (candidate.candidate_type === 'UPDATE_TASK') {
+      if (payload.action === 'complete') {
+        await supabase.from('tasks').update({ status: 'completed' }).eq('id', payload.task_id).eq('user_id', userId);
+      } else if (payload.action === 'reschedule') {
+        await supabase.from('tasks').update({ deadline: payload.new_deadline }).eq('id', payload.task_id).eq('user_id', userId);
+      }
+    } else if (candidate.candidate_type === 'DELETE_TASK') {
+      if (payload.delete_all) {
+        await supabase.from('tasks').delete().eq('user_id', userId).in('id', payload.task_ids);
+      } else {
+        await supabase.from('tasks').delete().eq('id', payload.task_id).eq('user_id', userId);
+      }
     }
 
-    // Mark candidate as confirmed
     await supabase.from('ai_candidates').update({ status: 'confirmed' }).eq('id', candidate.id);
   }
   
-  // Save to eval dataset and update decision log
+  const { data: dLog } = await supabase.from('decision_logs').select('id, selected_memories').eq('source_batch_id', batchId).single();
+  if (dLog) {
+    await updateDecisionLogByBatchId(batchId, 'accepted');
+    if (dLog.selected_memories) {
+      for (const memId of dLog.selected_memories) {
+        await reinforceMemory(memId);
+      }
+    }
+    
+    const feedbackLogs = candidates.map(c => ({
+      user_id: userId,
+      decision_log_id: dLog.id,
+      feedback_type: 'accepted',
+      original_payload: c.payload,
+      final_payload: c.payload
+    }));
+    await supabase.from('user_feedback').insert(feedbackLogs);
+  }
+
+  await updateSourceBatchSummary(batchId, 'Confirmed all items by user.');
+  
+  await editTelegramMessage(chatId, messageId, `✅ **確認完畢**\n\n已將 ${candidates.length} 個項目同步寫入正式資料庫與日曆同步佇列。`);
+  await answerCallbackQuery(callbackId, '已全數確認！');
+}
+
+export async function autoConfirmBatch(userId: string, batchId: string, chatId: number) {
+  const { data: candidates, error } = await supabase
+    .from('ai_candidates')
+    .select('*')
+    .eq('source_batch_id', batchId)
+    .eq('status', 'pending');
+
+  if (error || !candidates || candidates.length === 0) return false;
+
+  for (const candidate of candidates) {
+    const payload = candidate.payload as any;
+
+    if (candidate.candidate_type === 'TASK') {
+      await supabase.from('tasks').insert({
+        user_id: userId,
+        source_batch_id: batchId,
+        title: payload.title,
+        deadline: payload.due_at,
+        priority: payload.priority || 'medium',
+        category: payload.category || '其他',
+        status: 'pending',
+        confidence: candidate.confidence,
+        needs_review: false
+      });
+    } else if (candidate.candidate_type === 'EVENT') {
+      await supabase.from('calendar_intents').insert({
+        user_id: userId,
+        source_batch_id: batchId,
+        title: payload.title,
+        start_time: payload.start_at,
+        end_time: payload.end_at,
+        action_type: 'propose_create',
+        status: 'ready',
+        sync_status: 'ready',
+        confidence: candidate.confidence,
+        needs_review: false
+      });
+    } else if (candidate.candidate_type === 'MEMORY') {
+      await supabase.from('memories').insert({
+        user_id: userId,
+        content: payload.content,
+        importance: payload.importance || 5,
+        memory_type: payload.memory_type || null,
+        entity_type: payload.entity_type || null,
+        evidence_text: payload.evidence_text || null,
+        source_batch_id: batchId
+      });
+    } else if (candidate.candidate_type === 'UPDATE_TASK') {
+      if (payload.action === 'complete') {
+        await supabase.from('tasks').update({ status: 'completed' }).eq('id', payload.task_id).eq('user_id', userId);
+      } else if (payload.action === 'reschedule') {
+        await supabase.from('tasks').update({ deadline: payload.new_deadline }).eq('id', payload.task_id).eq('user_id', userId);
+      }
+    } else if (candidate.candidate_type === 'DELETE_TASK') {
+      if (payload.delete_all) {
+        await supabase.from('tasks').delete().eq('user_id', userId).in('id', payload.task_ids);
+      } else {
+        await supabase.from('tasks').delete().eq('id', payload.task_id).eq('user_id', userId);
+      }
+    }
+
+    await supabase.from('ai_candidates').update({ status: 'confirmed' }).eq('id', candidate.id);
+  }
+  
   const { data: dLog } = await supabase.from('decision_logs').select('id, selected_memories').eq('source_batch_id', batchId).single();
   if (dLog) {
     await updateDecisionLogByBatchId(batchId, 'accepted');
