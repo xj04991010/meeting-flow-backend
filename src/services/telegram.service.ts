@@ -30,7 +30,7 @@ export async function sendThinkingMessage(chatId: number, isShort: boolean = fal
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: chatId,
-        text: isShort ? '📝 已接收，分析中...' : '收到，我正在萃取會議中的待辦與行程。長篇紀錄可能需要 10~30 秒，請稍候。'
+        text: '⚡ 處理中...'
       })
     });
     const data = await response.json() as any;

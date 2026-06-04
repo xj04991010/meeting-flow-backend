@@ -64,15 +64,15 @@ function startProgressUpdates(chatId: number, messageId: number, isShort: boolea
   const updates = [
     {
       delay: 15_000,
-      text: '還在解析中。短會議通常 10-30 秒，長篇會議紀錄可能需要 1 分鐘左右。'
+      text: '⚡ 深度解析中...'
     },
     {
       delay: 35_000,
-      text: '資料比較長，我還在拆待辦與行程。預計再等 20-40 秒。'
+      text: '⚡ 正在萃取任務與行程，請稍候...'
     },
     {
       delay: 70_000,
-      text: '這次解析已超過 1 分鐘，可能是 LLM 回應較慢。我會再等一下，超過 90 秒會自動停止並回報錯誤。'
+      text: '⏳ 模型運算時間較長，仍在處理中...'
     }
   ];
 
