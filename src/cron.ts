@@ -101,4 +101,21 @@ export function startCronJobs() {
       console.error('Background task cron error:', error);
     }
   });
+
+  // 3. Proactive Agent (Runs daily at 3:00 AM Asia/Taipei -> 19:00 UTC)
+  cron.schedule('0 19 * * *', async () => {
+    try {
+      console.log('[CRON] Starting Daily Proactive Agent Scan...');
+      const { scanMemoriesAndGenerateTasks } = await import('./services/proactive.service');
+      const { data: users } = await supabase.from('users').select('id');
+      if (users) {
+        for (const u of users) {
+          await scanMemoriesAndGenerateTasks(u.id);
+        }
+      }
+      console.log('[CRON] Daily Proactive Agent Scan finished.');
+    } catch (error) {
+      console.error('[CRON] Proactive Agent error:', error);
+    }
+  });
 }

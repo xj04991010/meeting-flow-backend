@@ -506,6 +506,26 @@ app.patch('/api/user-settings', async (c) => {
   return c.json({ ok: true });
 });
 
+app.post('/api/cron/proactive', async (c) => {
+  const secret = c.req.header('Authorization');
+  if (process.env.CRON_SECRET && secret !== `Bearer ${process.env.CRON_SECRET}`) {
+    return c.text('Unauthorized', 401);
+  }
+  try {
+    const { scanMemoriesAndGenerateTasks } = await import('./services/proactive.service');
+    const { data: users } = await supabase.from('users').select('id');
+    if (users) {
+      for (const u of users) {
+        await scanMemoriesAndGenerateTasks(u.id);
+      }
+    }
+    return c.json({ ok: true, message: 'Proactive scan completed' });
+  } catch (error: any) {
+    console.error('Proactive API error:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
 app.route('/auth', googleAuthRouter);
 app.route('/api', googleCalendarRouter);
 
