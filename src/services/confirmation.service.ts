@@ -91,7 +91,23 @@ export async function processConfirmationJob(userId: string, chatId: number, cal
     
     // Reminders
     if (data.startsWith('remind_')) {
-      await answerCallbackQuery(callbackId, '提醒設定成功！');
+      // e.g. remind_15m_taskId or remind_1h_taskId
+      const parts = data.split('_');
+      const timeAmt = parts[1];
+      const taskId = parts[2];
+      let offsetMs = 0;
+      if (timeAmt === '15m') offsetMs = 15 * 60 * 1000;
+      if (timeAmt === '1h') offsetMs = 60 * 60 * 1000;
+      if (timeAmt === 'tomorrow') offsetMs = 24 * 60 * 60 * 1000;
+
+      if (offsetMs > 0 && taskId) {
+        const newTime = new Date(Date.now() + offsetMs).toISOString();
+        await supabase.from('tasks').update({ deadline: newTime }).eq('id', taskId).eq('user_id', userId);
+        await editTelegramMessage(chatId, messageId, `✅ 任務已成功延後！`);
+        await answerCallbackQuery(callbackId, '提醒設定成功！');
+      } else {
+        await answerCallbackQuery(callbackId, '無效的提醒參數。');
+      }
       return;
     }
 
@@ -154,7 +170,15 @@ async function handleConfirmBatch(userId: string, chatId: number, callbackId: st
     .eq('status', 'pending');
 
   if (error || !candidates || candidates.length === 0) {
-    await answerCallbackQuery(callbackId, '找不到待確認的項目，或已確認過。');
+    // Check if there are direct tasks/events for this batch (V3 flow without candidates)
+    const { syncBatchInternal } = await import('../google');
+    const result = await syncBatchInternal(userId);
+    if ('error' in result && result.code === 'NOT_AUTHORIZED') {
+      await answerCallbackQuery(callbackId, 'Google Calendar 尚未授權。');
+      return;
+    }
+    await editTelegramMessage(chatId, messageId, `✅ **同步完畢**\n\n已成功將待處理事項同步至 Google 日曆。`);
+    await answerCallbackQuery(callbackId, '已同步！');
     return;
   }
 

@@ -158,7 +158,7 @@ async function acquireCronLock(jobType: string): Promise<boolean> {
 
 app.post('/api/cron/morning', async (c) => {
   const token = c.req.header('x-cron-token');
-  if (process.env.CRON_SECRET && token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
+  if (!process.env.CRON_SECRET || token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
   if (!(await acquireCronLock('morning'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleMorningCommand } = await import('./services/command-handlers/morning.handler');
@@ -175,7 +175,7 @@ app.post('/api/cron/morning', async (c) => {
 
 app.post('/api/cron/nudging', async (c) => {
   const token = c.req.header('x-cron-token');
-  if (process.env.CRON_SECRET && token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
+  if (!process.env.CRON_SECRET || token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
   if (!(await acquireCronLock('nudging'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleNudgingCommand } = await import('./services/command-handlers/nudging.handler');
@@ -192,7 +192,7 @@ app.post('/api/cron/nudging', async (c) => {
 
 app.post('/api/cron/weekly', async (c) => {
   const token = c.req.header('x-cron-token');
-  if (process.env.CRON_SECRET && token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
+  if (!process.env.CRON_SECRET || token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
   if (!(await acquireCronLock('weekly'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { decayUnusedMemories } = await import('./services/memory.service');
@@ -203,7 +203,7 @@ app.post('/api/cron/weekly', async (c) => {
 
 app.post('/api/cron/evening', async (c) => {
   const token = c.req.header('x-cron-token');
-  if (process.env.CRON_SECRET && token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
+  if (!process.env.CRON_SECRET || token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
   if (!(await acquireCronLock('evening'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleEveningCommand } = await import('./services/command-handlers/evening.handler');
@@ -471,6 +471,9 @@ app.post('/api/extract', async (c) => {
     if (route.intent === 'chit_chat') {
       return c.json({ error: route.reply_message || '請輸入會議紀錄或待辦事項。閒聊請找 Telegram 助理！' }, 400);
     }
+    if (['update_tasks', 'eod_journal', 'query_weather'].includes(route.intent)) {
+      return c.json({ error: '此指令僅支援在 Telegram 助理中使用。請直接修改網頁上的項目。' }, 400);
+    }
 
     let result;
     let newRawText = raw_text;
@@ -524,7 +527,7 @@ app.patch('/api/user-settings', async (c) => {
 
 app.post('/api/cron/proactive', async (c) => {
   const token = c.req.header('x-cron-token');
-  if (process.env.CRON_SECRET && token !== process.env.CRON_SECRET) {
+  if (!process.env.CRON_SECRET || token !== process.env.CRON_SECRET) {
     return c.text('Unauthorized', 401);
   }
   try {

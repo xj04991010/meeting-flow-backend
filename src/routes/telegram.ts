@@ -5,7 +5,7 @@ import { createSourceBatch } from '../repositories/source-batches.repo';
 import { createProcessingJob } from '../repositories/processing-jobs.repo';
 import { supabase } from '../utils/db';
 import { processTelegramUpdate } from '../services/message-handler.service';
-import { handleCallbackQuery } from '../services/callback-handler.service';
+
 import { sendThinkingMessage } from '../services/telegram.service';
 
 export const telegramRoute = new Hono<{ Variables: { userId: string } }>();

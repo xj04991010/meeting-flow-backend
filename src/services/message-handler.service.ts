@@ -557,6 +557,9 @@ export async function processTelegramUpdate(message: any) {
         await editTelegramMessage(chatId as number, thinkingMessageId as number, `找不到包含「${route.delete_keyword}」的相關任務，請確認名稱是否正確。`);
       }
       return;
+    } else if (route.intent === 'delete_item') {
+      await editTelegramMessage(chatId as number, thinkingMessageId as number, '刪除失敗：缺少刪除關鍵字。請明確指出要刪除什麼任務。');
+      return;
     }
 
     if (route.intent === 'eod_journal' || text.toLowerCase().startsWith('/eod')) {
@@ -574,6 +577,9 @@ export async function processTelegramUpdate(message: any) {
 
     if (route.intent === 'chit_chat' && route.reply_message) {
       await handleChitChatCommand(chatId as number, thinkingMessageId as number, route.reply_message);
+      return;
+    } else if (route.intent === 'chit_chat') {
+      await handleChitChatCommand(chatId as number, thinkingMessageId as number, '聽不懂您的意思，可以換個方式說嗎？');
       return;
     }
 

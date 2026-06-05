@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { google } from 'googleapis';
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
+import * as crypto from 'crypto';
 
 dotenv.config();
 
@@ -24,10 +25,14 @@ const SCOPES = [
 
 export const googleAuthRouter = new Hono();
 
-// GET /auth/google?user_id=xxx
+// GET /auth/google?user_id=xxx&sig=yyy
 googleAuthRouter.get('/google', (c) => {
   const userId = c.req.query('user_id');
-  if (!userId) return c.json({ error: 'user_id is required' }, 400);
+  const sig = c.req.query('sig');
+  if (!userId || !sig) return c.json({ error: 'user_id and sig are required' }, 400);
+
+  const expectedSig = crypto.createHmac('sha256', process.env.TELEGRAM_BOT_TOKEN || '').update(userId).digest('hex');
+  if (sig !== expectedSig) return c.json({ error: 'Invalid signature' }, 403);
 
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
@@ -88,6 +93,13 @@ googleCalendarRouter.get('/auth/google/status', async (c) => {
   if (!userId) return c.json({ error: 'Unauthorized' }, 401);
   const { data } = await supabase.from('google_tokens').select('id').eq('user_id', userId).maybeSingle();
   return c.json({ hasAuth: !!data });
+});
+
+// GET /api/auth/google/sig
+googleCalendarRouter.get('/auth/google/sig', (c) => {
+  const userId = c.get('userId');
+  const sig = crypto.createHmac('sha256', process.env.TELEGRAM_BOT_TOKEN || '').update(userId).digest('hex');
+  return c.json({ sig });
 });
 
 async function getGoogleAuthClient(userId: string) {
