@@ -84,6 +84,17 @@ app.use('/api/*', async (c, next) => {
       return c.json({ error: 'Unauthorized: Invalid TMA signature' }, 401);
     }
     
+    const authDateStr = urlParams.get('auth_date');
+    if (!authDateStr) {
+      return c.json({ error: 'Unauthorized: Missing auth_date' }, 401);
+    }
+    const authDate = parseInt(authDateStr, 10);
+    const now = Math.floor(Date.now() / 1000);
+    // Token is valid for 24 hours (86400 seconds)
+    if (now - authDate > 86400) {
+      return c.json({ error: 'Unauthorized: Token expired' }, 401);
+    }
+    
     const userJson = urlParams.get('user');
     if (userJson) {
       const userObj = JSON.parse(decodeURIComponent(userJson));

@@ -102,7 +102,16 @@ export async function processConfirmationJob(userId: string, chatId: number, cal
   }
 }
 
+async function verifyBatchOwnership(batchId: string, userId: string) {
+  const { data } = await supabase.from('source_batches').select('user_id').eq('id', batchId).single();
+  return data && data.user_id === userId;
+}
+
 async function handleRejectBatch(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {
+  if (!(await verifyBatchOwnership(batchId, userId))) {
+    await answerCallbackQuery(callbackId, '無權限操作此項目。');
+    return;
+  }
   const { data: ignoredCandidates } = await supabase.from('ai_candidates').select('*').eq('source_batch_id', batchId);
   
   await supabase.from('ai_candidates').update({ status: 'ignored' }).eq('source_batch_id', batchId);
@@ -134,6 +143,10 @@ async function handleRejectBatch(userId: string, chatId: number, callbackId: str
 }
 
 async function handleConfirmBatch(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {
+  if (!(await verifyBatchOwnership(batchId, userId))) {
+    await answerCallbackQuery(callbackId, '無權限操作此項目。');
+    return;
+  }
   const { data: candidates, error } = await supabase
     .from('ai_candidates')
     .select('*')
@@ -313,6 +326,10 @@ export async function autoConfirmBatch(userId: string, batchId: string, chatId: 
 }
 
 async function handleUndoBatch(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {
+  if (!(await verifyBatchOwnership(batchId, userId))) {
+    await answerCallbackQuery(callbackId, '無權限操作此項目。');
+    return;
+  }
   await supabase.from('tasks').delete().eq('source_batch_id', batchId).eq('user_id', userId);
   await supabase.from('calendar_intents').delete().eq('source_batch_id', batchId).eq('user_id', userId);
   await supabase.from('memories').delete().eq('source_batch_id', batchId).eq('user_id', userId);
@@ -335,6 +352,10 @@ async function handleUndoBatch(userId: string, chatId: number, callbackId: strin
 }
 
 async function handleUndoUpdate(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {
+  if (!(await verifyBatchOwnership(batchId, userId))) {
+    await answerCallbackQuery(callbackId, '無權限操作此項目。');
+    return;
+  }
   const { data: candidates } = await supabase.from('ai_candidates').select('*').eq('source_batch_id', batchId).eq('candidate_type', 'UNDO_UPDATE_TASK');
   if (candidates && candidates.length > 0) {
     for (const c of candidates) {
@@ -352,6 +373,10 @@ async function handleUndoUpdate(userId: string, chatId: number, callbackId: stri
 }
 
 async function handleUndoDelete(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {
+  if (!(await verifyBatchOwnership(batchId, userId))) {
+    await answerCallbackQuery(callbackId, '無權限操作此項目。');
+    return;
+  }
   const { data: candidates } = await supabase.from('ai_candidates').select('*').eq('source_batch_id', batchId).eq('candidate_type', 'UNDO_DELETE_TASK');
   if (candidates && candidates.length > 0) {
     for (const c of candidates) {

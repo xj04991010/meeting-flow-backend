@@ -41,31 +41,9 @@ telegramRoute.post('/webhook', async (c) => {
       if (chatId) {
         const lowerText = text.toLowerCase();
         
-        // Command Routing (A-8)
-        if (lowerText.startsWith('/')) {
-          // Import dynamically to avoid top-level circular dependency if any
-          const { processTelegramUpdate } = await import('../services/message-handler.service');
-          processTelegramUpdate(message).catch((e: any) => console.error('Command routing error:', e));
-          return c.text('OK');
-        }
-
+        // Enqueue the entire message for asynchronous processing (including NLP Intent Routing)
         const userId = await getOrCreateUser(chatId);
-        
-        // 2. Fast ACK / Thinking message
-        // Instead of running LLM here, we just save to DB and queue job
-        const isShort = text.length <= 50;
-        const thinkingMessageId = await sendThinkingMessage(chatId, isShort);
-        
-        const batchId = await createSourceBatch(userId, text || 'voice_or_file_placeholder');
-        
-        // 3. Queue Background Job
-        await createProcessingJob(userId, 'EXTRACT_MEETING', {
-          chatId,
-          text,
-          voice: message.voice ? message.voice.file_id : null,
-          batchId,
-          thinkingMessageId
-        });
+        await createProcessingJob(userId, 'PROCESS_TELEGRAM_UPDATE', { message });
       }
     } else if (callback) {
       const chatId = callback.message?.chat?.id;

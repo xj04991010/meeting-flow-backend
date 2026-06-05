@@ -15,7 +15,10 @@ async function processJob(job: any) {
   await markJobStatus(job.id, 'processing');
 
   try {
-    if (job.job_type === 'EXTRACT_MEETING') {
+    if (job.job_type === 'PROCESS_TELEGRAM_UPDATE') {
+      const { processTelegramUpdate } = await import('../services/message-handler.service');
+      await processTelegramUpdate(job.payload.message);
+    } else if (job.job_type === 'EXTRACT_MEETING') {
       await processExtractionJob(
         job.user_id,
         job.payload.chatId,
