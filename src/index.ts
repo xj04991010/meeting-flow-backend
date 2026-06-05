@@ -48,6 +48,11 @@ app.use('/api/*', cors({
 
 // Auth Middleware for TMA Validation
 app.use('/api/*', async (c, next) => {
+  // Skip TMA auth for server-to-server cron endpoints
+  if (c.req.path.startsWith('/api/cron/')) {
+    return await next();
+  }
+
   const authHeader = c.req.header('Authorization');
   
   if (!authHeader || !authHeader.startsWith('tma ')) {
@@ -142,7 +147,7 @@ async function acquireCronLock(jobType: string): Promise<boolean> {
 
 app.post('/api/cron/morning', async (c) => {
   const token = c.req.header('x-cron-token');
-  if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  if (process.env.CRON_SECRET && token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
   if (!(await acquireCronLock('morning'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleMorningCommand } = await import('./services/command-handlers/morning.handler');
@@ -159,7 +164,7 @@ app.post('/api/cron/morning', async (c) => {
 
 app.post('/api/cron/nudging', async (c) => {
   const token = c.req.header('x-cron-token');
-  if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  if (process.env.CRON_SECRET && token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
   if (!(await acquireCronLock('nudging'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleNudgingCommand } = await import('./services/command-handlers/nudging.handler');
@@ -176,7 +181,7 @@ app.post('/api/cron/nudging', async (c) => {
 
 app.post('/api/cron/weekly', async (c) => {
   const token = c.req.header('x-cron-token');
-  if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  if (process.env.CRON_SECRET && token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
   if (!(await acquireCronLock('weekly'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { decayUnusedMemories } = await import('./services/memory.service');
@@ -187,7 +192,7 @@ app.post('/api/cron/weekly', async (c) => {
 
 app.post('/api/cron/evening', async (c) => {
   const token = c.req.header('x-cron-token');
-  if (token !== 'meeting-flow-morning-2026') return c.json({ error: 'Unauthorized' }, 401);
+  if (process.env.CRON_SECRET && token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
   if (!(await acquireCronLock('evening'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleEveningCommand } = await import('./services/command-handlers/evening.handler');
@@ -507,8 +512,8 @@ app.patch('/api/user-settings', async (c) => {
 });
 
 app.post('/api/cron/proactive', async (c) => {
-  const secret = c.req.header('Authorization');
-  if (process.env.CRON_SECRET && secret !== `Bearer ${process.env.CRON_SECRET}`) {
+  const token = c.req.header('x-cron-token');
+  if (process.env.CRON_SECRET && token !== process.env.CRON_SECRET) {
     return c.text('Unauthorized', 401);
   }
   try {

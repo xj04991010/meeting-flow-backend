@@ -16,7 +16,8 @@ on:
     # Afternoon Nudging: 07:00 UTC = 15:00 Taipei
     - cron: '0 7 * * *'
     # Evening Report: 12:00 UTC = 20:00 Taipei
-    - cron: '0 12 * * *'
+    # Proactive Agent: 19:00 UTC = 03:00 Taipei (Next Day)
+    - cron: '0 19 * * *'
     # Weekly Memory Decay: Sunday 18:00 UTC = Monday 02:00 Taipei
     - cron: '0 18 * * 0'
   
@@ -45,6 +46,9 @@ jobs:
           elif [ "$HOUR" = "12" ]; then
             echo "ACTION=EVENING" >> $GITHUB_ENV
             echo "Endpoint: POST /api/cron/evening"
+          elif [ "$HOUR" = "19" ]; then
+            echo "ACTION=PROACTIVE" >> $GITHUB_ENV
+            echo "Endpoint: POST /api/cron/proactive"
           elif [ "$HOUR" = "18" ] && [ "$DAY" = "0" ]; then
             echo "ACTION=WEEKLY" >> $GITHUB_ENV
             echo "Endpoint: POST /api/cron/weekly"
@@ -54,7 +58,7 @@ jobs:
 
       - name: Execute Wake Up Ping
         if: env.ACTION == 'WAKE_UP'
-        run: curl -s https://meeting-flow-backend-1.onrender.com/ > /dev/null
+        run: curl -s https://meeting-flow-backend.onrender.com/ > /dev/null
 
       - name: Execute Morning Briefing
         if: env.ACTION == 'MORNING' || env.ACTION == 'MANUAL_ALL'
@@ -63,7 +67,7 @@ jobs:
             -H "x-cron-token: ${{ secrets.CRON_SECRET }}" \
             --max-time 120 \
             --fail \
-            https://meeting-flow-backend-1.onrender.com/api/cron/morning || true
+            https://meeting-flow-backend.onrender.com/api/cron/morning
 
       - name: Execute Afternoon Nudging
         if: env.ACTION == 'NUDGING' || env.ACTION == 'MANUAL_ALL'
@@ -72,7 +76,7 @@ jobs:
             -H "x-cron-token: ${{ secrets.CRON_SECRET }}" \
             --max-time 120 \
             --fail \
-            https://meeting-flow-backend-1.onrender.com/api/cron/nudging || true
+            https://meeting-flow-backend.onrender.com/api/cron/nudging
 
       - name: Execute Evening Report
         if: env.ACTION == 'EVENING' || env.ACTION == 'MANUAL_ALL'
@@ -81,7 +85,16 @@ jobs:
             -H "x-cron-token: ${{ secrets.CRON_SECRET }}" \
             --max-time 120 \
             --fail \
-            https://meeting-flow-backend-1.onrender.com/api/cron/evening || true
+            https://meeting-flow-backend.onrender.com/api/cron/evening
+
+      - name: Execute Proactive Agent
+        if: env.ACTION == 'PROACTIVE' || env.ACTION == 'MANUAL_ALL'
+        run: |
+          curl -X POST \
+            -H "x-cron-token: ${{ secrets.CRON_SECRET }}" \
+            --max-time 120 \
+            --fail \
+            https://meeting-flow-backend.onrender.com/api/cron/proactive
 
       - name: Execute Weekly Memory Decay
         if: env.ACTION == 'WEEKLY' || env.ACTION == 'MANUAL_ALL'
@@ -90,4 +103,4 @@ jobs:
             -H "x-cron-token: ${{ secrets.CRON_SECRET }}" \
             --max-time 120 \
             --fail \
-            https://meeting-flow-backend-1.onrender.com/api/cron/weekly || true
+            https://meeting-flow-backend.onrender.com/api/cron/weekly

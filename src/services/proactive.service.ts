@@ -36,12 +36,13 @@ ${JSON.stringify(tasks, null, 2)}
 
 Rules:
 1. Evaluate EVERY single memory. If a memory implies a specific date (e.g. a birthday, anniversary, or a specific day of the month like "每月5號") that falls between Current Date and the end of the Lookahead Window, you MUST generate a reminder task for it.
-2. Provide lead time! For example, if the event is on 10/15, generate a task today with a title like "[提醒] 爸爸生日 (10/15) 快到了，請提前準備".
-3. For monthly routines (e.g. "月初要結帳"), if today is within 3 days before or after the routine, generate the task.
+2. Provide lead time! For example, if the event is on 10/15, generate a task today with a title like "[AI推演] 爸爸生日 (10/15) 快到了，請提前準備".
+3. For monthly routines (e.g. "月初要結帳"), if today is within 3 days before or after the routine, generate the task with "[AI推演] 月初結帳" prefix.
 4. DO NOT generate tasks for events outside the Lookahead Window. Wait until they are 1-14 days away.
 5. DO NOT duplicate tasks. Check the titles of CURRENT PENDING TASKS carefully. If a task for this specific occurrence already exists, do not create another one.
 6. Set 'due_at' to the actual deadline of the event (ISO-8601).
 7. If no new tasks are needed today, output an empty array.
+8. ALWAYS prefix the generated task title with "[AI推演] " so the user knows the AI proactively created it.
 
 Output JSON only:
 {
