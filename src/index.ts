@@ -261,7 +261,7 @@ app.get('/api/dashboard/weekly', async (c) => {
     supabase.from('google_tokens').select('id').eq('user_id', userId).maybeSingle(),
     supabase.from('tasks').select('*').eq('user_id', userId).neq('status', 'cancelled').order('created_at', { ascending: false }).limit(300),
     supabase.from('calendar_intents').select('*').eq('user_id', userId).neq('status', 'cancelled').order('created_at', { ascending: false }).limit(300),
-    supabase.from('source_batches').select('*').eq('user_id', userId).order('created_at', { ascending: false }).limit(5)
+    supabase.from('source_batches').select('*, ai_candidates(*)').eq('user_id', userId).order('created_at', { ascending: false }).limit(5)
   ]);
 
   const userWithAuth = user ? { ...user, is_calendar_authorized: !!tokenData } : null;

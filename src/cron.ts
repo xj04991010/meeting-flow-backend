@@ -7,13 +7,24 @@ dotenv.config();
 
 import { supabase } from './utils/db';
 
-// Keep track of notified events to prevent duplicate notifications
-const notifiedEventIds = new Set<string>();
+// Keep track of notified events to prevent duplicate notifications (Map of ID -> Expiry Timestamp)
+const notifiedEventIds = new Map<string, number>();
+const notifiedTasks = new Map<string, number>();
 
-// Clear cache every hour to prevent memory leaks
+// Clean up expired cache every hour to prevent memory leaks
 setInterval(() => {
-  notifiedEventIds.clear();
-  console.log('[CRON] Cleared notifiedEventIds cache');
+  const now = Date.now();
+  for (const [id, expiry] of notifiedEventIds.entries()) {
+    if (now > expiry) {
+      notifiedEventIds.delete(id);
+    }
+  }
+  for (const [id, expiry] of notifiedTasks.entries()) {
+    if (now > expiry) {
+      notifiedTasks.delete(id);
+    }
+  }
+  console.log(`[CRON] Garbage collected caches. Events: ${notifiedEventIds.size}, Tasks: ${notifiedTasks.size}`);
 }, 60 * 60 * 1000);
 
 /**
@@ -43,7 +54,7 @@ export function startCronJobs() {
         
         // Check memory to avoid duplicate alerts
         if (notifiedEventIds.has(e.id)) continue;
-        notifiedEventIds.add(e.id);
+        notifiedEventIds.set(e.id, Date.now() + 24 * 60 * 60 * 1000);
 
         const timeStr = new Date(e.start_time).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit' });
         const message = `⏰ **行程提醒**\n\n您的會議/行程「${e.title}」將於 ${timeStr} 開始 (15分鐘內)！`;
@@ -60,7 +71,6 @@ export function startCronJobs() {
   });
 
   // 3. Deadline Reminders (Check every minute)
-  const notifiedTasks = new Set<string>();
   const reminderTemplates = [
     (title: string) => `🔔 **溫馨提醒**\n\n您的待辦事項【${title}】已經到期啦！\n請記得處理喔！ 🏃‍♂️`,
     (title: string) => `✨ **貼心提醒**\n\n您的任務【${title}】時間到了！\n趕快去完成它吧，你可以的！ 💪`,
@@ -82,7 +92,7 @@ export function startCronJobs() {
 
       for (const t of (dueTasks || [])) {
         if (!notifiedTasks.has(t.id)) {
-          notifiedTasks.add(t.id);
+          notifiedTasks.set(t.id, Date.now() + 24 * 60 * 60 * 1000);
           const { data: u } = await supabase.from('users').select('telegram_chat_id').eq('id', t.user_id).single();
           if (u && u.telegram_chat_id) {
             const template = reminderTemplates[Math.floor(Math.random() * reminderTemplates.length)];
