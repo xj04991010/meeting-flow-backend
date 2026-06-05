@@ -538,29 +538,33 @@ requireEnv();
 
 console.log(`MeetingFlow backend is running on port ${PORT}`);
 
-serve({
-  fetch: app.fetch,
-  port: PORT
-}, async (info) => {
-  console.log(`Listening on http://localhost:${info.port}`);
-  
-  const externalUrl = process.env.RENDER_EXTERNAL_URL;
-  if (externalUrl && TELEGRAM_BOT_TOKEN) {
-    // V2 Route matches POST /webhook on the root
-    const webhookUrl = `${externalUrl}/webhook`; 
-    try {
-      const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET ? `&secret_token=${process.env.TELEGRAM_WEBHOOK_SECRET}` : '';
-      const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${webhookUrl}${secretToken}`);
-      const data = await res.json() as any;
-      if (data.ok) {
-        console.log(`✅ Webhook successfully set to ${webhookUrl}`);
-      } else {
-        console.error(`❌ Failed to set webhook:`, data);
+if (process.env.NODE_ENV !== 'test') {
+  serve({
+    fetch: app.fetch,
+    port: PORT
+  }, async (info) => {
+    console.log(`Listening on http://localhost:${info.port}`);
+    
+    const externalUrl = process.env.RENDER_EXTERNAL_URL;
+    if (externalUrl && TELEGRAM_BOT_TOKEN) {
+      // V2 Route matches POST /webhook on the root
+      const webhookUrl = `${externalUrl}/webhook`; 
+      try {
+        const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET ? `&secret_token=${process.env.TELEGRAM_WEBHOOK_SECRET}` : '';
+        const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${webhookUrl}${secretToken}`);
+        const data = await res.json() as any;
+        if (data.ok) {
+          console.log(`✅ Webhook successfully set to ${webhookUrl}`);
+        } else {
+          console.error(`❌ Failed to set webhook:`, data);
+        }
+      } catch (e) {
+        console.error(`❌ Error setting webhook:`, e);
       }
-    } catch (e) {
-      console.error(`❌ Error setting webhook:`, e);
+    } else {
+      console.log('⚠️ No RENDER_EXTERNAL_URL found. Webhook not set automatically. If testing locally, use ngrok.');
     }
-  } else {
-    console.log('⚠️ No RENDER_EXTERNAL_URL found. Webhook not set automatically. If testing locally, use ngrok.');
-  }
-});
+  });
+}
+
+export default app;
