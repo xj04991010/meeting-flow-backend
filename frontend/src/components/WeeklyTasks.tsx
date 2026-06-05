@@ -7,9 +7,10 @@ interface WeeklyTasksProps {
   selectedDate: string;
   onEditTask: (task: TaskRow) => void;
   onToggleTaskComplete: (id: string, current: string) => void;
+  onUnscheduleTask?: (taskId: string) => void;
 }
 
-export function WeeklyTasks({ tasks, selectedDate, onEditTask, onToggleTaskComplete }: WeeklyTasksProps) {
+export function WeeklyTasks({ tasks, selectedDate, onEditTask, onToggleTaskComplete, onUnscheduleTask }: WeeklyTasksProps) {
   const targetDate = selectedDate ? new Date(selectedDate) : new Date();
   const day = targetDate.getDay();
   const diffToMonday = targetDate.getDate() - day + (day === 0 ? -6 : 1);
@@ -45,7 +46,18 @@ export function WeeklyTasks({ tasks, selectedDate, onEditTask, onToggleTaskCompl
           <span>本週沒有未完成任務。Telegram 或快速整理匯入後會集中顯示在這裡。</span>
         </div>
       ) : (
-        <div className="weekly-tasks-grid">
+        <div 
+          className="weekly-tasks-grid"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            const type = e.dataTransfer.getData('type');
+            if (type === 'task' && onUnscheduleTask) {
+              const taskId = e.dataTransfer.getData('id');
+              if (taskId) onUnscheduleTask(taskId);
+            }
+          }}
+        >
           {weeklyTasks.map((task) => (
             <article 
               key={task.id} 

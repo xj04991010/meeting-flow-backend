@@ -274,6 +274,11 @@ function App() {
     await fetchData();
   };
 
+  const handleUnscheduleTask = async (taskId: string) => {
+    await updateTask(taskId, { deadline: null });
+    await fetchData();
+  };
+
   const handleDropEvent = async (eventId: string, targetDateStr: string, originalStartStr: string) => {
     try {
       const [year, month, day] = targetDateStr.split('-').map(Number);
@@ -396,6 +401,7 @@ function App() {
             selectedDate={selectedDate}
             onEditTask={(task) => setEditing({ type: 'task', item: task })}
             onToggleTaskComplete={handleToggleTaskComplete}
+            onUnscheduleTask={handleUnscheduleTask}
           />
         <section className="calendar-priority" aria-label="週曆主工作區">
         <div className="calendar-section-header">
@@ -479,6 +485,7 @@ function App() {
             onEditTask={(task) => setEditing({ type: 'task', item: task })}
             onToggleTaskComplete={handleToggleTaskComplete}
             onDeleteTask={handleDeleteTask}
+            onUnscheduleTask={handleUnscheduleTask}
           />
         <section className="summary-strip" aria-label="本週摘要">
             <div className="metric-card attention">

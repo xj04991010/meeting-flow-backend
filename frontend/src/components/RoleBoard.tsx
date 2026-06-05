@@ -9,6 +9,7 @@ type RoleBoardProps = {
   onEditTask: (task: TaskRow) => void;
   onToggleTaskComplete: (taskId: string, currentStatus: string) => void;
   onDeleteTask: (taskId: string) => void;
+  onUnscheduleTask?: (taskId: string) => void;
 };
 
 const DEFAULT_CATEGORIES = ['工作', '客戶', '研究', '其他'];
@@ -19,6 +20,7 @@ export const RoleBoard = memo(function RoleBoard({
   onEditTask,
   onToggleTaskComplete,
   onDeleteTask,
+  onUnscheduleTask,
 }: RoleBoardProps) {
   const categories = useMemo(() => {
     // Force exactly 4 categories for the 4-grid layout
@@ -43,7 +45,17 @@ export const RoleBoard = memo(function RoleBoard({
         gridTemplateColumns: 'repeat(4, 1fr)', 
         gap: '16px',
         alignItems: 'start'
-      }}>
+      }}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        const type = e.dataTransfer.getData('type');
+        if (type === 'task' && onUnscheduleTask) {
+          const taskId = e.dataTransfer.getData('id');
+          if (taskId) onUnscheduleTask(taskId);
+        }
+      }}
+      >
         {categories.map((category, idx) => {
           const categoryTasks = tasks.filter((task) => {
             if (!task.category && category === '其他') return true;

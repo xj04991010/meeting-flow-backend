@@ -27,7 +27,18 @@ export const ReviewPanel = memo(function ReviewPanel({
 
       <div className="review-list">
         {tasks.map((task) => (
-          <article key={task.id} className="review-card task-type" onClick={() => onEditTask(task)}>
+          <article 
+            key={task.id} 
+            className="review-card task-type" 
+            onClick={() => onEditTask(task)}
+            draggable
+            onDragStart={(event) => {
+              event.dataTransfer.setData('type', 'task');
+              event.dataTransfer.setData('id', task.id);
+              event.dataTransfer.setData('taskId', task.id);
+            }}
+            style={{ cursor: 'grab' }}
+          >
             <div className="review-card-body">
               <span className="card-type-badge task-badge">任務</span>
               <strong>
@@ -53,7 +64,18 @@ export const ReviewPanel = memo(function ReviewPanel({
         ))}
 
         {events.map((event) => (
-          <article key={event.id} className="review-card event-type" onClick={() => onEditEvent(event)}>
+          <article 
+            key={event.id} 
+            className="review-card event-type" 
+            onClick={() => onEditEvent(event)}
+            draggable
+            onDragStart={(dragEvent) => {
+              dragEvent.dataTransfer.setData('type', 'event');
+              dragEvent.dataTransfer.setData('id', event.id);
+              dragEvent.dataTransfer.setData('originalStart', event.start_time || '');
+            }}
+            style={{ cursor: 'grab' }}
+          >
             <div className="review-card-body">
               <span className="card-type-badge event-badge">行程</span>
               <strong>{event.title}</strong>
