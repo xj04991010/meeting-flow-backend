@@ -47,7 +47,18 @@ export function WeeklyTasks({ tasks, selectedDate, onEditTask, onToggleTaskCompl
       ) : (
         <div className="weekly-tasks-grid">
           {weeklyTasks.map((task) => (
-            <article key={task.id} className="weekly-task-card" onClick={() => onEditTask(task)}>
+            <article 
+              key={task.id} 
+              className="weekly-task-card" 
+              onClick={() => onEditTask(task)}
+              draggable
+              onDragStart={(event) => {
+                event.dataTransfer.setData('type', 'task');
+                event.dataTransfer.setData('id', task.id);
+                event.dataTransfer.setData('taskId', task.id);
+              }}
+              style={{ cursor: 'grab' }}
+            >
               <div className="task-header">
                 <button
                   className={`check-btn ${task.status === 'completed' ? 'checked' : ''}`}
