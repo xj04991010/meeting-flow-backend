@@ -58,7 +58,10 @@ export const RoleBoard = memo(function RoleBoard({
       >
         {categories.map((category, idx) => {
           const categoryTasks = tasks.filter((task) => {
-            if (!task.category && category === '其他') return true;
+            const isKnownCategory = categories.includes(task.category || '');
+            if (category === '其他') {
+              return !task.category || !isKnownCategory || task.category === '其他';
+            }
             return task.category === category;
           });
 
