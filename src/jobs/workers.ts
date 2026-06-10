@@ -1,5 +1,5 @@
 import { supabase } from '../utils/db';
-import { markJobStatus } from '../repositories/processing-jobs.repo';
+import { claimPendingJob, markJobStatus } from '../repositories/processing-jobs.repo';
 import { processExtractionJob } from '../services/extraction.service';
 import { processConfirmationJob } from '../services/confirmation.service';
 
@@ -12,9 +12,10 @@ async function processJob(job: any) {
   if (runningJobIds.has(job.id)) return;
   runningJobIds.add(job.id);
 
-  await markJobStatus(job.id, 'processing');
-
   try {
+    const claimed = await claimPendingJob(job.id);
+    if (!claimed) return;
+
     if (job.job_type === 'PROCESS_TELEGRAM_UPDATE') {
       const { processTelegramUpdate } = await import('../services/message-handler.service');
       await processTelegramUpdate(job.payload.message);

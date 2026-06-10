@@ -133,12 +133,12 @@ Mission:
   1. 📝 Executive Summary (會議總結)
   2. 🗣️ Speaker Notes (發言要點)
   3. ✅ Action Items by Owner (各負責人待辦)
-- CONFIRMATION & REVIEW: If the user provides a direct, clear command with a specific date, time, and action item (e.g., "新增明天下午三點的會議"), set "needs_review": false. If the text is messy, ambiguous, or lacks specific time details, set "needs_review": true so the user can verify it.
+- CONFIRMATION & REVIEW: ALL extracted tasks and events must be created as review drafts first. Always set "needs_review": true, even when the command is clear. The user confirms drafts from Dashboard before they become active.
 - CONVERSATIONAL FALLBACK: If the user is simply chatting, asking a question, or providing non-actionable input (e.g. "你有幾種功能", "你好"), DO NOT hallucinate tasks or events. Output an empty list for tasks and events. In 'reply_message', provide a brutally direct, logical, and highly objective response. Never use polite padding, marketing rhetoric, or moral persuasion. Only use the summary format when there are actual meeting points or tasks to extract.
+- ANTI-HALLUCINATION: NEVER invent tasks or actions (e.g., "腳本撰寫", "剪輯") for a client if the text does not explicitly mention them for that specific client. If the text says "開會" (meeting), it MUST be an event, not a task, even if the exact time is fuzzy or missing (use a fallback time or leave start_time null). Do not mix context between different clients.
 - STRICT CATEGORIZATION:
-  * Events (events): Meetings, physical appointments. Must have a time constraint.
+  * Events (events): Meetings, physical appointments. Must have a time constraint or explicitly be a meeting ("開會").
   * Tasks (tasks): Deliverables, script writing, video editing, etc.
-- ROLE-BASED CATEGORIZATION (情境標籤): Every task must be assigned to ONE of the following core categories in the "category" field: "${catsStr}".
 - SMART TIME INFERENCE:
   * "明天" (tomorrow) -> infer exact date.
   * "下週" (next week) -> infer next Monday or specific day if mentioned.
@@ -155,7 +155,7 @@ Output JSON only:
       "owner": "person responsible or null",
       "deadline": "ISO-8601 datetime with timezone if clear, otherwise null",
       "priority": "high or medium or low",
-      "category": "${catsSchema}",
+      "category": "null (leave empty during extraction)",
       "confidence": 0.0,
       "needs_review": true,
       "source_quote": "short quote from the source text"
@@ -231,10 +231,13 @@ ${batchContext}
 """
 
 Mission:
-- The user is providing a short supplement or modification command to the Recent Meeting Context above.
-- Extract any NEW tasks and events based on the user's command.
-- If the user says "add a task for X", return it in "tasks".
-- Output JSON exactly like the main extraction format, with reply_message, tasks, events, and unresolved_notes.
+- The user is providing a natural language correction or supplement to the Recent Meeting Context & Extracted Drafts above.
+- If the user points out a mistake (e.g., "X is a meeting, not a task" or "cancel Y"), you MUST:
+  1. Find the short ID (e.g., "T1", "E2") of the wrong draft.
+  2. Put that short ID in the "delete_targets" array.
+  3. If it was a correction (not just a cancellation), output the corrected version in "tasks" or "events".
+- If the user is just adding something new, output it in "tasks" or "events".
+- Output JSON exactly like the main extraction format, with reply_message, tasks, events, unresolved_notes, and delete_targets.
 - IMPORTANT: Respect the user's exact terminology. If the user writes "發片", DO NOT convert it to "發貨". Maintain the original context.
 
 Output JSON only:
@@ -247,13 +250,14 @@ Output JSON only:
       "owner": "person responsible or null",
       "deadline": "ISO-8601 datetime with timezone if clear, otherwise null",
       "priority": "high or medium or low",
-      "category": "${catsSchema}",
+      "category": "null (leave empty during extraction)",
       "confidence": 0.0,
       "needs_review": true,
       "source_quote": "short quote from the source text"
     }
   ],
   "events": [...],
+  "delete_targets": ["T1", "E2"],
   "unresolved_notes": []
 }
 
@@ -261,7 +265,7 @@ Rules:
 - Prefer Traditional Chinese.
 - Keep titles concise but operational.
 - Do not behave like a coach.
-- CONFIRMATION & REVIEW: If the user provides a direct, clear command with a specific date, time, and action item, set "needs_review": false. If ambiguous, set "needs_review": true so the user can verify it.`;
+- CONFIRMATION & REVIEW: Always set "needs_review": true. The user confirms drafts from Dashboard before they become active.`;
 }
 
 export async function extractSupplementData(userId: string, text: string, batchContext: string): Promise<ParserOutput> {
@@ -308,15 +312,12 @@ export async function persistExtraction(userId: string, rawText: string, result:
   const taskIds = Array.isArray(tasksResult) ? tasksResult : [];
   const taskCount = Array.isArray(tasksResult) ? tasksResult.length : (tasksResult as number);
   const eventCount = await insertEvents(userId, batchId, result.events || []);
-  const memoryCount = await insertMemories(userId, result.memories || []);
+  const memoryCount = await insertMemories(userId, batchId, result.memories || []);
   
-  const reviewCount = [
-    ...(result.tasks || []).map((task) => makeReviewFlag(normalizeConfidence(task.confidence), task.needs_review)),
-    ...(result.events || []).map((event) => makeReviewFlag(normalizeConfidence(event.confidence), event.needs_review, hasMeaningfulText(event.start_time)))
-  ].filter(Boolean).length + (result.unresolved_notes?.length || 0);
-  const autoReadyEventCount = (result.events || [])
-    .filter((event) => !makeReviewFlag(normalizeConfidence(event.confidence), event.needs_review, hasMeaningfulText(event.start_time)))
-    .length;
+  const reviewCount = (result.tasks?.length || 0)
+    + (result.events?.length || 0)
+    + (result.unresolved_notes?.length || 0);
+  const autoReadyEventCount = 0;
 
   return { batchId, taskCount, eventCount, reviewCount, autoReadyEventCount, taskIds, memoryCount };
 }
@@ -325,13 +326,34 @@ export async function persistExtraction(userId: string, rawText: string, result:
 
 export function buildTelegramSummary(userId: string, result: ParserOutput, summary: BatchSummary & { memoryCount?: number }) {
   // Fireflies.ai style detailed summary is now in reply_message
-  const reply = result.reply_message?.trim() || `已成功萃取內容！`;
+  const reply = result.reply_message?.trim() || `已解析完成。`;
 
   if (summary.taskCount === 0 && summary.eventCount === 0 && (!summary.memoryCount || summary.memoryCount === 0)) {
     return reply; // Pure conversational response, no footer needed
   }
 
   const lines = [reply, ''];
+  
+  if (result.tasks && result.tasks.length > 0) {
+    lines.push('📋 **擷取的待辦任務：**');
+    result.tasks.forEach((t) => {
+      const clientStr = t.client ? `[${t.client}] ` : '';
+      const dateStr = t.deadline ? ` (期限: ${t.deadline.substring(5,10)})` : '';
+      lines.push(`• ${clientStr}${t.title}${dateStr}`);
+    });
+    lines.push('');
+  }
+
+  if (result.events && result.events.length > 0) {
+    lines.push('📅 **擷取的日曆行程：**');
+    result.events.forEach((e) => {
+      const clientStr = e.client ? `[${e.client}] ` : '';
+      const dateStr = e.start_time ? ` (${e.start_time.substring(5,10)})` : '';
+      lines.push(`• ${clientStr}${e.title}${dateStr}`);
+    });
+    lines.push('');
+  }
+
   lines.push('---');
   
   let stats = `💡 **系統已自動擷取 ${summary.taskCount} 件待辦與 ${summary.eventCount} 個行程**`;
@@ -600,23 +622,56 @@ export async function processTelegramUpdate(message: any) {
         await editTelegramMessage(chatId as number, thinkingMessageId as number, '找不到您最近的紀錄可以補充。請直接輸入新的任務或行程。');
         return;
       }
+      
+      const { data: recentTasks } = await supabase.from('tasks').select('id, title, client').eq('source_batch_id', latestBatch.id);
+      const { data: recentEvents } = await supabase.from('calendar_intents').select('id, title, client').eq('source_batch_id', latestBatch.id);
+      
+      let batchContext = `Recent Meeting Context:\n"""\n${latestBatch.raw_text}\n"""\n\n`;
+      batchContext += `Currently Extracted Drafts (for reference):\n`;
+      
+      const draftMap: Record<string, string> = {};
+      recentTasks?.forEach((t, i) => {
+        const shortId = `T${i+1}`;
+        draftMap[shortId] = t.id;
+        batchContext += `[${shortId}] (Task) Client: ${t.client || 'None'} | Title: ${t.title}\n`;
+      });
+      recentEvents?.forEach((e, i) => {
+        const shortId = `E${i+1}`;
+        draftMap[shortId] = e.id;
+        batchContext += `[${shortId}] (Event) Client: ${e.client || 'None'} | Title: ${e.title}\n`;
+      });
+
       console.log(`Starting supplement extraction for user=${userId}`);
-      const result = await extractSupplementData(userId, text, latestBatch.raw_text);
+      const result = await extractSupplementData(userId, text, batchContext);
+
+      // Execute NLP deletions
+      let deletedCount = 0;
+      if (result.delete_targets && result.delete_targets.length > 0) {
+        const idsToDelete: string[] = [];
+        for (const target of result.delete_targets) {
+          if (draftMap[target]) idsToDelete.push(draftMap[target]);
+        }
+        if (idsToDelete.length > 0) {
+          const { error: tErr } = await supabase.from('tasks').delete().eq('user_id', userId).in('id', idsToDelete);
+          const { error: eErr } = await supabase.from('calendar_intents').delete().eq('user_id', userId).in('id', idsToDelete);
+          if (!tErr && !eErr) deletedCount = idsToDelete.length;
+        }
+      }
       
       const newRawText = latestBatch.raw_text + '\n\n[補充指令]: ' + text;
       const batchSummary = await persistExtraction(userId, newRawText, result);
       
-      const reply = `✅ **補充成功！**\n\n${buildTelegramSummary(userId, result, batchSummary)}`;
+      let replyMsg = deletedCount > 0 ? `✅ **修改成功！(已刪除 ${deletedCount} 筆舊草稿)**\n\n` : `✅ **補充成功！**\n\n`;
+      replyMsg += buildTelegramSummary(userId, result, batchSummary);
       
       let buttons: TelegramButton[][] | undefined = undefined;
       if (batchSummary.taskCount > 0 || batchSummary.eventCount > 0) {
         buttons = [
-          [{ text: '✅ 全部確認並同步', callback_data: `sync_batch_${batchSummary.batchId}` }],
-          [{ text: '❌ 放棄此筆補充', callback_data: `reject_batch_${batchSummary.batchId}` }],
-          [{ text: '打開 Dashboard 修改細節', url: getDashboardUrl(userId) }]
+          [{ text: '❌ 辨識錯誤，放棄整筆紀錄', callback_data: `reject_batch_${batchSummary.batchId}` }],
+          [{ text: '🔗 前往 Dashboard 整理', url: getDashboardUrl(userId) }]
         ];
       }
-      await editTelegramMessage(chatId as number, thinkingMessageId as number, reply, buttons);
+      await editTelegramMessage(chatId as number, thinkingMessageId as number, replyMsg, buttons);
       return;
     }
 
@@ -638,13 +693,12 @@ export async function processTelegramUpdate(message: any) {
       ];
     } else if (batchSummary.taskCount > 0 || batchSummary.eventCount > 0 || (batchSummary.memoryCount && batchSummary.memoryCount > 0)) {
       buttons = [
-        [{ text: '✅ 全部確認並同步', callback_data: `sync_batch_${batchSummary.batchId}` }]
+        [{ text: '❌ 辨識太爛，整筆作廢', callback_data: `reject_batch_${batchSummary.batchId}` }]
       ];
-      buttons.push([{ text: '❌ 辨識錯誤，放棄此筆紀錄', callback_data: `reject_batch_${batchSummary.batchId}` }]);
       if (batchSummary.memoryCount && batchSummary.memoryCount > 0) {
         buttons.push([{ text: '🧠 查看已存入的長期記憶', callback_data: 'view_memory' }]);
       }
-      buttons.push([{ text: '打開 Dashboard 修改細節', url: getDashboardUrl(userId) }]);
+      buttons.push([{ text: '🔗 前往 Dashboard 整理', url: getDashboardUrl(userId) }]);
     }
 
     await editTelegramMessage(chatId as number, thinkingMessageId as number, reply, buttons);

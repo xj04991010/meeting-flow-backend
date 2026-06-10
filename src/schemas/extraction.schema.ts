@@ -30,7 +30,8 @@ export const ParserOutputSchema = z.object({
   tasks: z.array(ExtractedTaskSchema).nullable().optional(),
   events: z.array(ExtractedEventSchema).nullable().optional(),
   memories: z.array(z.string()).nullable().optional(),
-  unresolved_notes: z.array(z.string().nullable()).nullable().optional()
+  unresolved_notes: z.array(z.string().nullable()).nullable().optional(),
+  delete_targets: z.array(z.string()).nullable().optional()
 });
 export type ParserOutput = z.infer<typeof ParserOutputSchema>;
 

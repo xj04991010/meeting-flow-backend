@@ -26,10 +26,7 @@ export async function updateSourceBatchSummary(batchId: string, aiSummary: strin
   if (output && output.type === 'SUCCESS') {
     const taskCount = output.tasks?.length || 0;
     const eventCount = output.events?.length || 0;
-    const reviewCount = [
-      ...(output.tasks || []).map((t: any) => t.needs_review),
-      ...(output.events || []).map((e: any) => e.needs_review)
-    ].filter(Boolean).length;
+    const reviewCount = taskCount + eventCount + (output.prep_gap_notes?.length || 0);
 
     updatePayload.metadata = {
       task_count: taskCount,
@@ -59,10 +56,7 @@ export async function getLatestSourceBatch(userId: string) {
 export async function createSourceBatchV1(userId: string, rawText: string, result: any): Promise<string | null> {
   const taskCount = result.tasks?.length || 0;
   const eventCount = result.events?.length || 0;
-  const reviewCount = [
-    ...(result.tasks || []).map((t: any) => t.needs_review),
-    ...(result.events || []).map((e: any) => e.needs_review)
-  ].filter(Boolean).length + (result.unresolved_notes?.length || 0);
+  const reviewCount = taskCount + eventCount + (result.unresolved_notes?.length || 0);
 
   const { data, error } = await supabase
     .from('source_batches')

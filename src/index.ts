@@ -22,10 +22,15 @@ import { getOrCreateUser } from './repositories/users.repo';
 
 dotenv.config();
 
-// Initialize proactive background reminders
-startCronJobs();
-// Initialize V2 background processing workers
-startJobWorker();
+const backgroundJobsDisabled = process.env.DISABLE_BACKGROUND_JOBS === 'true' || process.env.NODE_ENV === 'test';
+
+if (!backgroundJobsDisabled) {
+  // Initialize proactive background reminders and V2 background processing workers.
+  startCronJobs();
+  startJobWorker();
+} else {
+  console.log('[BOOT] Background cron jobs and workers disabled.');
+}
 
 type Variables = { userId: string };
 const app = new Hono<{ Variables: Variables }>();
@@ -127,6 +132,8 @@ import { ExtractedTaskSchema, ExtractedTask, ExtractedEventSchema, ExtractedEven
 
 
 import { getLatestSourceBatch } from './repositories/source-batches.repo';
+import { acquireCronLock } from './services/cron-lock.service';
+import { checkCronWindow } from './services/cron-window.service';
 import { 
   processTelegramUpdate, 
   nullableText, 
@@ -137,7 +144,6 @@ import {
   extractSupplementData, 
   persistExtraction 
 } from './services/message-handler.service';
-import { handleCallbackQuery } from './services/callback-handler.service';
 
 
 app.get('/', (c) => {
@@ -148,17 +154,23 @@ app.get('/', (c) => {
   });
 });
 
-// POST /api/cron/morning - Triggered by GitHub Actions
-async function acquireCronLock(jobType: string): Promise<boolean> {
-  const todayStr = new Date().toLocaleString('en-CA', { timeZone: 'Asia/Taipei' }).split(',')[0];
-  const { error } = await supabase.from('cron_runs').insert([{ job_type: jobType, run_date: todayStr }]);
-  if (error && error.code === '23505') return false; // Already ran
-  return true;
+function cronWindowSkip(jobType: string) {
+  const window = checkCronWindow(jobType);
+  if (window.allowed) return null;
+  return {
+    ok: true,
+    skipped: true,
+    message: `Outside ${jobType} schedule window`,
+    current_time: window.currentTime,
+    allowed_window: window.windowLabel
+  };
 }
 
 app.post('/api/cron/morning', async (c) => {
   const token = c.req.header('x-cron-token');
   if (!process.env.CRON_SECRET || token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
+  const skipped = cronWindowSkip('morning');
+  if (skipped) return c.json(skipped);
   if (!(await acquireCronLock('morning'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleMorningCommand } = await import('./services/command-handlers/morning.handler');
@@ -176,6 +188,8 @@ app.post('/api/cron/morning', async (c) => {
 app.post('/api/cron/nudging', async (c) => {
   const token = c.req.header('x-cron-token');
   if (!process.env.CRON_SECRET || token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
+  const skipped = cronWindowSkip('nudging');
+  if (skipped) return c.json(skipped);
   if (!(await acquireCronLock('nudging'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleNudgingCommand } = await import('./services/command-handlers/nudging.handler');
@@ -204,6 +218,8 @@ app.post('/api/cron/weekly', async (c) => {
 app.post('/api/cron/evening', async (c) => {
   const token = c.req.header('x-cron-token');
   if (!process.env.CRON_SECRET || token !== process.env.CRON_SECRET) return c.json({ error: 'Unauthorized' }, 401);
+  const skipped = cronWindowSkip('evening');
+  if (skipped) return c.json(skipped);
   if (!(await acquireCronLock('evening'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   
   const { handleEveningCommand } = await import('./services/command-handlers/evening.handler');
@@ -369,6 +385,10 @@ app.patch('/api/tasks/:id', async (c) => {
     update.category = nullableText(body.client) || 'meeting';
   }
 
+  if ('category' in body) {
+    update.category = nullableText(body.category) || '其他';
+  }
+
   if ('owner' in body) update.owner = nullableText(body.owner);
   if ('deadline' in body) update.deadline = nullableDate(body.deadline);
 
@@ -530,6 +550,9 @@ app.post('/api/cron/proactive', async (c) => {
   if (!process.env.CRON_SECRET || token !== process.env.CRON_SECRET) {
     return c.text('Unauthorized', 401);
   }
+  const skipped = cronWindowSkip('proactive');
+  if (skipped) return c.json(skipped);
+  if (!(await acquireCronLock('proactive'))) return c.json({ ok: true, skipped: true, message: 'Already ran today' });
   try {
     const { scanMemoriesAndGenerateTasks } = await import('./services/proactive.service');
     const { data: users } = await supabase.from('users').select('id');

@@ -88,17 +88,32 @@ export async function processConfirmationJob(userId: string, chatId: number, cal
       await answerCallbackQuery(callbackId, '長按可查看記憶面板 (開發中)');
       return;
     }
+
+    if (data.startsWith('postpone_task_')) {
+      const taskId = data.replace('postpone_task_', '');
+      const newTime = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      await supabase.from('tasks').update({ deadline: newTime }).eq('id', taskId).eq('user_id', userId);
+      await editTelegramMessage(chatId, messageId, `✅ 任務已延到明天。`);
+      await answerCallbackQuery(callbackId, '已延到明天。');
+      return;
+    }
     
     // Reminders
     if (data.startsWith('remind_')) {
-      // e.g. remind_15m_taskId or remind_1h_taskId
-      const parts = data.split('_');
-      const timeAmt = parts[1];
-      const taskId = parts[2];
+      const reminderPayload = data.replace('remind_', '');
+      const knownOffsets = ['30m', '15m', '1h', '1d', '1w', '1m', 'tomorrow'];
+      const suffix = knownOffsets.find((offset) => reminderPayload.endsWith(`_${offset}`));
+      const timeAmt = suffix || reminderPayload.split('_')[0];
+      const taskId = suffix
+        ? reminderPayload.slice(0, -(suffix.length + 1))
+        : reminderPayload.split('_').slice(1).join('_');
       let offsetMs = 0;
       if (timeAmt === '15m') offsetMs = 15 * 60 * 1000;
+      if (timeAmt === '30m') offsetMs = 30 * 60 * 1000;
       if (timeAmt === '1h') offsetMs = 60 * 60 * 1000;
-      if (timeAmt === 'tomorrow') offsetMs = 24 * 60 * 60 * 1000;
+      if (timeAmt === '1d' || timeAmt === 'tomorrow') offsetMs = 24 * 60 * 60 * 1000;
+      if (timeAmt === '1w') offsetMs = 7 * 24 * 60 * 60 * 1000;
+      if (timeAmt === '1m') offsetMs = 30 * 24 * 60 * 60 * 1000;
 
       if (offsetMs > 0 && taskId) {
         const newTime = new Date(Date.now() + offsetMs).toISOString();
@@ -123,6 +138,35 @@ async function verifyBatchOwnership(batchId: string, userId: string) {
   return data && data.user_id === userId;
 }
 
+async function insertMemoryCandidate(userId: string, batchId: string, payload: any) {
+  const row = {
+    user_id: userId,
+    content: payload.content,
+    importance: payload.importance || 5,
+    memory_type: payload.memory_type || null,
+    entity_type: payload.entity_type || null,
+    evidence_text: payload.evidence_text || null,
+    source_batch_id: batchId
+  };
+
+  const { error } = await supabase.from('memories').insert(row);
+  if (!error) return;
+
+  if (error.code === '42703' || /(memory_type|source_batch_id)/.test(error.message || '')) {
+    const fallback = await supabase.from('memories').insert({
+      user_id: row.user_id,
+      content: row.content,
+      importance: row.importance,
+      entity_type: row.entity_type,
+      evidence_text: row.evidence_text
+    });
+    if (fallback.error) console.error('insertMemoryCandidate fallback error:', fallback.error);
+    return;
+  }
+
+  console.error('insertMemoryCandidate error:', error);
+}
+
 async function handleRejectBatch(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {
   if (!(await verifyBatchOwnership(batchId, userId))) {
     await answerCallbackQuery(callbackId, '無權限操作此項目。');
@@ -131,6 +175,12 @@ async function handleRejectBatch(userId: string, chatId: number, callbackId: str
   const { data: ignoredCandidates } = await supabase.from('ai_candidates').select('*').eq('source_batch_id', batchId);
   
   await supabase.from('ai_candidates').update({ status: 'ignored' }).eq('source_batch_id', batchId);
+  
+  // V3 Flow: Tasks and Intents are inserted immediately, so we must delete them on reject
+  await supabase.from('tasks').delete().eq('source_batch_id', batchId).eq('user_id', userId);
+  await supabase.from('calendar_intents').delete().eq('source_batch_id', batchId).eq('user_id', userId);
+  await supabase.from('memories').delete().eq('source_batch_id', batchId).eq('user_id', userId);
+
   await updateSourceBatchSummary(batchId, 'Ignored by user.');
   
   if (ignoredCandidates) {
@@ -211,15 +261,7 @@ async function handleConfirmBatch(userId: string, chatId: number, callbackId: st
         needs_review: false
       });
     } else if (candidate.candidate_type === 'MEMORY') {
-      await supabase.from('memories').insert({
-        user_id: userId,
-        content: payload.content,
-        importance: payload.importance || 5,
-        memory_type: payload.memory_type || null,
-        entity_type: payload.entity_type || null,
-        evidence_text: payload.evidence_text || null,
-        source_batch_id: batchId
-      });
+      await insertMemoryCandidate(userId, batchId, payload);
     } else if (candidate.candidate_type === 'UPDATE_TASK') {
       if (payload.action === 'complete') {
         await supabase.from('tasks').update({ status: 'completed' }).eq('id', payload.task_id).eq('user_id', userId);
@@ -263,90 +305,8 @@ async function handleConfirmBatch(userId: string, chatId: number, callbackId: st
 }
 
 export async function autoConfirmBatch(userId: string, batchId: string, chatId: number) {
-  const { data: candidates, error } = await supabase
-    .from('ai_candidates')
-    .select('*')
-    .eq('source_batch_id', batchId)
-    .eq('status', 'pending');
-
-  if (error || !candidates || candidates.length === 0) return false;
-
-  for (const candidate of candidates) {
-    const payload = candidate.payload as any;
-
-    if (candidate.candidate_type === 'TASK') {
-      await supabase.from('tasks').insert({
-        user_id: userId,
-        source_batch_id: batchId,
-        title: payload.title,
-        deadline: payload.due_at,
-        priority: payload.priority || 'medium',
-        category: payload.category || '其他',
-        status: 'pending',
-        confidence: candidate.confidence,
-        needs_review: false
-      });
-    } else if (candidate.candidate_type === 'EVENT') {
-      await supabase.from('calendar_intents').insert({
-        user_id: userId,
-        source_batch_id: batchId,
-        title: payload.title,
-        start_time: payload.start_at,
-        end_time: payload.end_at,
-        action_type: 'propose_create',
-        status: 'ready',
-        sync_status: 'ready',
-        confidence: candidate.confidence,
-        needs_review: false
-      });
-    } else if (candidate.candidate_type === 'MEMORY') {
-      await supabase.from('memories').insert({
-        user_id: userId,
-        content: payload.content,
-        importance: payload.importance || 5,
-        memory_type: payload.memory_type || null,
-        entity_type: payload.entity_type || null,
-        evidence_text: payload.evidence_text || null,
-        source_batch_id: batchId
-      });
-    } else if (candidate.candidate_type === 'UPDATE_TASK') {
-      if (payload.action === 'complete') {
-        await supabase.from('tasks').update({ status: 'completed' }).eq('id', payload.task_id).eq('user_id', userId);
-      } else if (payload.action === 'reschedule') {
-        await supabase.from('tasks').update({ deadline: payload.new_deadline }).eq('id', payload.task_id).eq('user_id', userId);
-      }
-    } else if (candidate.candidate_type === 'DELETE_TASK') {
-      if (payload.delete_all) {
-        await supabase.from('tasks').delete().eq('user_id', userId).in('id', payload.task_ids);
-      } else {
-        await supabase.from('tasks').delete().eq('id', payload.task_id).eq('user_id', userId);
-      }
-    }
-
-    await supabase.from('ai_candidates').update({ status: 'confirmed' }).eq('id', candidate.id);
-  }
-  
-  const { data: dLog } = await supabase.from('decision_logs').select('id, selected_memories').eq('source_batch_id', batchId).single();
-  if (dLog) {
-    await updateDecisionLogByBatchId(batchId, 'accepted');
-    if (dLog.selected_memories) {
-      for (const memId of dLog.selected_memories) {
-        await reinforceMemory(memId);
-      }
-    }
-    
-    const feedbackLogs = candidates.map(c => ({
-      user_id: userId,
-      decision_log_id: dLog.id,
-      feedback_type: 'accepted',
-      original_payload: c.payload,
-      final_payload: c.payload
-    }));
-    await supabase.from('user_feedback').insert(feedbackLogs);
-  }
-
-  await updateSourceBatchSummary(batchId, 'Auto-confirmed items due to high confidence.');
-  return true;
+  console.warn('autoConfirmBatch is disabled. Batch must be confirmed explicitly by the user.', { userId, batchId, chatId });
+  return false;
 }
 
 async function handleUndoBatch(userId: string, chatId: number, callbackId: string, batchId: string, messageId: number) {

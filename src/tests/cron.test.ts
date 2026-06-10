@@ -8,8 +8,17 @@ vi.mock('../services/proactive.service', () => ({
   scanMemoriesAndGenerateTasks: vi.fn().mockResolvedValue(1)
 }));
 vi.mock('../cron', () => ({
-  acquireCronLock: vi.fn().mockResolvedValue(true), // Always get the lock in tests
   startCronJobs: vi.fn()
+}));
+vi.mock('../services/cron-lock.service', () => ({
+  acquireCronLock: vi.fn().mockResolvedValue(true)
+}));
+vi.mock('../services/cron-window.service', () => ({
+  checkCronWindow: vi.fn().mockReturnValue({
+    allowed: true,
+    currentTime: '2026-06-10 09:00 Asia/Taipei',
+    windowLabel: 'test'
+  })
 }));
 
 describe('Cron Endpoints', () => {

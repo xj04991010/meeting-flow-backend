@@ -30,3 +30,20 @@ export async function markJobStatus(jobId: string, status: 'processing' | 'compl
     .update(updateData)
     .eq('id', jobId);
 }
+
+export async function claimPendingJob(jobId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('processing_jobs')
+    .update({ status: 'processing', updated_at: new Date().toISOString() })
+    .eq('id', jobId)
+    .eq('status', 'pending')
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    console.error('claimPendingJob error:', error);
+    throw error;
+  }
+
+  return Boolean(data);
+}

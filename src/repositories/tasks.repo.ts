@@ -25,14 +25,14 @@ export async function insertTasks(userId: string, batchId: string | null, tasks:
         user_id: userId,
         title: (task.title || '').trim(),
         category: task.category || '其他',
-        status: makeReviewFlag(confidence, task.needs_review) ? 'needs_review' : 'pending',
+        status: 'needs_review',
         deadline: task.deadline || null,
         priority: task.priority || 'medium',
         source_batch_id: batchId,
         client: task.client || null,
         owner: task.owner || null,
         confidence,
-        needs_review: makeReviewFlag(confidence, task.needs_review),
+        needs_review: true,
         source_quote: task.source_quote || null
       };
     });

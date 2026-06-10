@@ -1,27 +1,26 @@
 import { supabase } from '../utils/db';
 import { ExtractedEvent } from '../schemas/extraction.schema';
-import { normalizeConfidence, hasMeaningfulText, makeReviewFlag } from './tasks.repo';
+import { normalizeConfidence, hasMeaningfulText } from './tasks.repo';
 
 export async function insertEvents(userId: string, batchId: string | null, events: ExtractedEvent[]) {
   const rows = events
     .filter((event) => hasMeaningfulText(event.title) && hasMeaningfulText(event.start_time))
     .map((event) => {
       const confidence = normalizeConfidence(event.confidence);
-      const needsReview = makeReviewFlag(confidence, event.needs_review, hasMeaningfulText(event.start_time));
       return {
         user_id: userId,
         title: (event.title || '').trim(),
         start_time: event.start_time,
         end_time: event.end_time || null,
         action_type: 'propose_create',
-        status: needsReview ? 'needs_review' : 'ready',
+        status: 'needs_review',
         source_batch_id: batchId,
         client: event.client || null,
         location: event.location || null,
         confidence,
-        needs_review: needsReview,
+        needs_review: true,
         source_quote: event.source_quote || null,
-        sync_status: needsReview ? 'pending_review' : 'ready'
+        sync_status: 'pending_review'
       };
     });
 

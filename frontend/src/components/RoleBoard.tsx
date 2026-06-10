@@ -10,9 +10,11 @@ type RoleBoardProps = {
   onToggleTaskComplete: (taskId: string, currentStatus: string) => void;
   onDeleteTask: (taskId: string) => void;
   onUnscheduleTask?: (taskId: string) => void;
+  onUpdateTaskCategory?: (taskId: string, category: string) => void;
 };
 
 const DEFAULT_CATEGORIES = ['工作', '客戶', '研究', '其他'];
+const FALLBACK_CATEGORY = '其他';
 
 export const RoleBoard = memo(function RoleBoard({
   tasks,
@@ -21,12 +23,12 @@ export const RoleBoard = memo(function RoleBoard({
   onToggleTaskComplete,
   onDeleteTask,
   onUnscheduleTask,
+  onUpdateTaskCategory,
 }: RoleBoardProps) {
   const categories = useMemo(() => {
-    // Force exactly 4 categories for the 4-grid layout
     const baseCategories = customCategories && customCategories.length > 0 ? customCategories : DEFAULT_CATEGORIES;
     const finalCats = [...baseCategories];
-    while (finalCats.length < 4) finalCats.push('其他');
+    while (finalCats.length < 4) finalCats.push(FALLBACK_CATEGORY);
     return finalCats.slice(0, 4);
   }, [customCategories]);
 
@@ -40,58 +42,44 @@ export const RoleBoard = memo(function RoleBoard({
         <span className="badge">{tasks.length}</span>
       </div>
 
-      <div className="role-board-grid" style={{ 
-        display: 'grid', 
-        gridTemplateColumns: 'repeat(4, 1fr)', 
-        gap: '16px',
-        alignItems: 'start'
-      }}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault();
-        const type = e.dataTransfer.getData('type');
-        if (type === 'task' && onUnscheduleTask) {
-          const taskId = e.dataTransfer.getData('id');
-          if (taskId) onUnscheduleTask(taskId);
-        }
-      }}
-      >
+      <div className="role-board-grid">
         {categories.map((category, idx) => {
           const categoryTasks = tasks.filter((task) => {
-            const isKnownCategory = categories.includes(task.category || '');
-            if (category === '其他') {
-              return !task.category || !isKnownCategory || task.category === '其他';
-            }
-            return task.category === category;
+            const taskCategory = task.category || FALLBACK_CATEGORY;
+            const isKnownCategory = categories.includes(taskCategory);
+            if (category === FALLBACK_CATEGORY) return !isKnownCategory || taskCategory === FALLBACK_CATEGORY;
+            return taskCategory === category;
           });
 
           return (
-            <div key={`${category}-${idx}`} className="role-column" style={{ 
-              display: 'flex', 
-              flexDirection: 'column', 
-              gap: '12px',
-              background: 'var(--surface)',
-              padding: '12px',
-              borderRadius: '8px',
-              border: '1px solid var(--line)'
-            }}>
-              <h3 style={{ 
-                margin: '0', 
-                fontSize: '14px', 
-                color: 'var(--text-soft)', 
-                borderBottom: '1px solid var(--line)', 
-                paddingBottom: '8px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}>
-                {category}
+            <div
+              key={`${category}-${idx}`}
+              className="role-column"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                const type = event.dataTransfer.getData('type');
+                if (type !== 'task') return;
+
+                const taskId = event.dataTransfer.getData('id') || event.dataTransfer.getData('taskId');
+                if (!taskId) return;
+
+                if (onUpdateTaskCategory) {
+                  onUpdateTaskCategory(taskId, category);
+                  return;
+                }
+
+                onUnscheduleTask?.(taskId);
+              }}
+            >
+              <div className="role-column-header">
+                <h3>{category}</h3>
                 <span className="badge">{categoryTasks.length}</span>
-              </h3>
-              
-              <div className="role-task-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              </div>
+
+              <div className="role-task-list">
                 {categoryTasks.length === 0 ? (
-                  <div className="empty-state" style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)' }}>無任務</div>
+                  <div className="empty-state">沒有任務</div>
                 ) : (
                   categoryTasks.map((task) => (
                     <article
@@ -104,7 +92,6 @@ export const RoleBoard = memo(function RoleBoard({
                         event.dataTransfer.setData('id', task.id);
                         event.dataTransfer.setData('taskId', task.id);
                       }}
-                      style={{ cursor: 'pointer' }}
                     >
                       <div className="task-header">
                         <button
@@ -114,6 +101,7 @@ export const RoleBoard = memo(function RoleBoard({
                             onToggleTaskComplete(task.id, task.status || 'pending');
                           }}
                           title="切換完成狀態"
+                          aria-label="切換完成狀態"
                         />
                         <strong className="card-title">
                           {task.priority === 'high' && <span className="priority-dot">高</span>}
@@ -134,6 +122,7 @@ export const RoleBoard = memo(function RoleBoard({
                               onDeleteTask(task.id);
                             }}
                             title="刪除任務"
+                            aria-label="刪除任務"
                           >
                             <Trash2 size={13} />
                           </button>

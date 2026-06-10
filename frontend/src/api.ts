@@ -9,18 +9,26 @@
 
 import type { WeeklyDashboardResponse } from './types';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:3000';
+const configuredBackendUrl = import.meta.env.VITE_BACKEND_URL || '';
+const isLocalFrontend = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const BACKEND_URL =
+  isLocalFrontend && configuredBackendUrl.includes('onrender.com')
+    ? 'http://127.0.0.1:3000'
+    : configuredBackendUrl || 'http://127.0.0.1:3000';
 
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json'
   };
   
-  if (typeof window !== 'undefined' && (window as any).Telegram?.WebApp?.initData) {
-    headers['Authorization'] = `tma ${(window as any).Telegram.WebApp.initData}`;
+  const telegramInitData = typeof window !== 'undefined' ? (window as any).Telegram?.WebApp?.initData : '';
+
+  if (typeof telegramInitData === 'string' && telegramInitData.includes('hash=')) {
+    headers['Authorization'] = `tma ${telegramInitData}`;
   } else {
     // Development fallback
-    const devToken = localStorage.getItem('dev_auth_token') || localStorage.getItem('MF_USER_ID') || '6578915a-d33e-4eed-8d22-a3e334480f56';
+    const storage = typeof window !== 'undefined' ? window.localStorage : undefined;
+    const devToken = storage?.getItem('dev_auth_token') || storage?.getItem('MF_USER_ID') || '6578915a-d33e-4eed-8d22-a3e334480f56';
     headers['Authorization'] = `tma ${devToken}`;
   }
   return headers;

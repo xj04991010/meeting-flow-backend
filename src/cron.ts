@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
 import { sendTelegram } from './services/telegram.service';
+import { acquireCronLock } from './services/cron-lock.service';
 
 dotenv.config();
 
@@ -115,6 +116,11 @@ export function startCronJobs() {
   // 3. Proactive Agent (Runs daily at 3:00 AM Asia/Taipei -> 19:00 UTC)
   cron.schedule('0 19 * * *', async () => {
     try {
+      if (!(await acquireCronLock('proactive'))) {
+        console.log('[CRON] Daily Proactive Agent Scan skipped: lock already acquired.');
+        return;
+      }
+
       console.log('[CRON] Starting Daily Proactive Agent Scan...');
       const { scanMemoriesAndGenerateTasks } = await import('./services/proactive.service');
       const { data: users } = await supabase.from('users').select('id');

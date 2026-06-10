@@ -6,9 +6,8 @@ export async function loadRelevantMemories(userId: string, inputText: string): P
     // In the future, this can be improved with pgvector similarity search
     const { data } = await supabase
       .from('memories')
-      .select('id, user_id, type, entity_type, content, importance, used_count')
+      .select('id, user_id, entity_type, content, importance, used_count, confidence')
       .eq('user_id', userId)
-      .eq('is_active', true)
       .order('importance', { ascending: false })
       .order('used_count', { ascending: false })
       .limit(10);
@@ -63,7 +62,7 @@ export async function penalizeMemory(memoryId: string): Promise<void> {
 export async function decayUnusedMemories(): Promise<void> {
   // Can be called by cron job weekly to decay memory importance
   try {
-    const { data } = await supabase.from('memories').select('id, importance').eq('is_active', true);
+    const { data } = await supabase.from('memories').select('id, importance');
     if (!data) return;
     
     for (const mem of data) {
