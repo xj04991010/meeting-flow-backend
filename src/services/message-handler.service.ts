@@ -580,7 +580,16 @@ export async function processTelegramUpdate(message: any) {
       }
       return;
     } else if (route.intent === 'delete_item') {
-      await editTelegramMessage(chatId as number, thinkingMessageId as number, '刪除失敗：缺少刪除關鍵字。請明確指出要刪除什麼任務。');
+      const isClearAll = /(全部|所有|清空|一切)/.test(text);
+      if (isClearAll) {
+        const buttons = [
+          [{ text: '⚠️ 確定清空「所有」內容', callback_data: 'del_all_content_confirm' }],
+          [{ text: '❌ 取消', callback_data: 'cancel_delete' }]
+        ];
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, '您要求清空全部內容。這將會刪除您所有的任務與行程。確定要繼續嗎？', buttons);
+      } else {
+        await editTelegramMessage(chatId as number, thinkingMessageId as number, '刪除失敗：缺少刪除關鍵字。請明確指出要刪除什麼任務。');
+      }
       return;
     }
 

@@ -52,6 +52,16 @@ export async function processConfirmationJob(userId: string, chatId: number, cal
       return;
     }
 
+    if (data === 'del_all_content_confirm') {
+      await supabase.from('tasks').delete().eq('user_id', userId);
+      await supabase.from('calendar_intents').delete().eq('user_id', userId);
+      await supabase.from('source_batches').delete().eq('user_id', userId);
+      await supabase.from('memories').delete().eq('user_id', userId);
+      await editTelegramMessage(chatId, messageId, `✅ 所有任務、行程與會議紀錄已全數清空。`);
+      await answerCallbackQuery(callbackId, '已清空！');
+      return;
+    }
+
     if (data === 'cancel_delete') {
       await editTelegramMessage(chatId, messageId, `❌ 已取消刪除操作。`);
       await answerCallbackQuery(callbackId, '已取消');
