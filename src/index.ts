@@ -35,20 +35,41 @@ if (!backgroundJobsDisabled) {
 type Variables = { userId: string };
 const app = new Hono<{ Variables: Variables }>();
 
-import { SUPABASE_URL, SUPABASE_KEY, TELEGRAM_BOT_TOKEN, GROQ_API_KEY, DASHBOARD_BASE_URL, getDashboardUrl, PORT, PARSER_VERSION, GROQ_TIMEOUT_MS, requireEnv, CRON_SECRET } from './utils/env';
+import { SUPABASE_URL, SUPABASE_KEY, TELEGRAM_BOT_TOKEN, GROQ_API_KEY, DASHBOARD_BASE_URL, DASHBOARD_ACCESS_TOKEN, getDashboardUrl, PORT, PARSER_VERSION, GROQ_TIMEOUT_MS, requireEnv, CRON_SECRET } from './utils/env';
 
 // Validate environment variables immediately
 requireEnv();
 
 import { supabase } from './utils/db';
 
-const defaultOrigins = ['http://127.0.0.1:5173', 'http://localhost:5173', 'https://meeting-flow-backend-1.onrender.com'];
-const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : defaultOrigins;
+const defaultOrigins = [
+  'http://127.0.0.1:5173',
+  'http://localhost:5173',
+  'https://meeting-flow-backend-1.onrender.com',
+  DASHBOARD_BASE_URL
+];
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+  : defaultOrigins;
+const privateNetworkOrigin = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?::\d{1,5})?$/;
+
+function isAllowedOrigin(origin: string) {
+  return allowedOrigins.includes('*') || allowedOrigins.includes(origin) || privateNetworkOrigin.test(origin);
+}
+
+function secureTokenEquals(actual: string, expected: string) {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
 
 app.use('/api/*', cors({
-  origin: allowedOrigins,
-  allowMethods: ['GET', 'PATCH', 'POST', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization']
+  origin: (origin) => {
+    if (!origin) return origin;
+    return isAllowedOrigin(origin) ? origin : undefined;
+  },
+  allowMethods: ['GET', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Dashboard-User-Id']
 }));
 
 // Auth Middleware for TMA Validation
@@ -59,6 +80,22 @@ app.use('/api/*', async (c, next) => {
   }
 
   const authHeader = c.req.header('Authorization');
+
+  if (authHeader?.startsWith('dashboard ')) {
+    const dashboardToken = authHeader.substring('dashboard '.length).trim();
+    const dashboardUserId = c.req.header('X-Dashboard-User-Id') || process.env.DASHBOARD_USER_ID || '';
+
+    if (!DASHBOARD_ACCESS_TOKEN || !secureTokenEquals(dashboardToken, DASHBOARD_ACCESS_TOKEN)) {
+      return c.json({ error: 'Unauthorized: Invalid dashboard token' }, 401);
+    }
+
+    if (!dashboardUserId) {
+      return c.json({ error: 'Unauthorized: Missing dashboard user id' }, 401);
+    }
+
+    c.set('userId', dashboardUserId);
+    return await next();
+  }
   
   if (!authHeader || !authHeader.startsWith('tma ')) {
     return c.json({ error: 'Unauthorized: Missing or invalid TMA token' }, 401);

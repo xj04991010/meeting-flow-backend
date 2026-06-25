@@ -8,10 +8,14 @@ export const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 export const PORT = Number(process.env.PORT || 3000);
 export const PARSER_VERSION = 'meeting-extract-v2';
 export const GROQ_TIMEOUT_MS = 90_000;
-export const DASHBOARD_BASE_URL = 'https://meeting-flow-backend-1.onrender.com';
+export const DASHBOARD_BASE_URL = process.env.DASHBOARD_BASE_URL || 'https://meeting-flow-backend-1.onrender.com';
+export const DASHBOARD_ACCESS_TOKEN = process.env.DASHBOARD_ACCESS_TOKEN || '';
 
 export function getDashboardUrl(uid?: string) {
-  return uid ? `${DASHBOARD_BASE_URL}?uid=${uid}` : DASHBOARD_BASE_URL;
+  const url = new URL(DASHBOARD_BASE_URL);
+  if (uid) url.searchParams.set('uid', uid);
+  if (DASHBOARD_ACCESS_TOKEN) url.searchParams.set('token', DASHBOARD_ACCESS_TOKEN);
+  return url.toString();
 }
 
 export const CRON_SECRET = process.env.CRON_SECRET || 'fallback-secret';
