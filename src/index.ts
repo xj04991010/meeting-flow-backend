@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import { routeIntent } from './services/intent-router.service';
 
 import { handleMorningCommand } from './services/command-handlers/morning.handler';
@@ -7,7 +8,6 @@ import { handleEveningCommand } from './services/command-handlers/evening.handle
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
 import * as crypto from 'crypto';
 import { z } from 'zod';
@@ -175,12 +175,10 @@ import {
   processTelegramUpdate, 
   nullableText, 
   nullableDate, 
-  booleanOrUndefined, 
-   
-  extractMeetingData, 
-  extractSupplementData, 
-  persistExtraction 
+  booleanOrUndefined
 } from './services/message-handler.service';
+import { getClientWeeklyNotes, upsertClientWeeklyNote, getLatestNotesForAllClients } from './repositories/client-weekly-notes.repo';
+import { getClients, createClient as repoCreateClient, updateClient } from './repositories/clients.repo';
 
 
 app.get('/', (c) => {
@@ -547,14 +545,113 @@ app.post('/api/manual-entry', async (c) => {
   }
 });
 
+// ─── Clients API ───────────────────────────────
+
+app.get('/api/clients', async (c) => {
+  const userId = c.get('userId');
+  try {
+    const clients = await getClients(userId);
+    return c.json({ clients });
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.post('/api/clients', async (c) => {
+  const userId = c.get('userId');
+  const body = await c.req.json();
+  if (!body.name) return c.json({ error: 'Client name is required' }, 400);
+
+  try {
+    const client = await repoCreateClient(userId, body);
+    return c.json(client);
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.patch('/api/clients/:id', async (c) => {
+  const userId = c.get('userId');
+  const id = c.req.param('id');
+  const body = await c.req.json();
+
+  try {
+    const client = await updateClient(userId, id, body);
+    return c.json(client);
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// ─── Client Weekly Notes API ──────────────────
+
+app.get('/api/client-notes', async (c) => {
+  const userId = c.get('userId');
+  const weekKey = c.req.query('week_key');
+  if (!weekKey) return c.json({ error: 'week_key is required' }, 400);
+
+  try {
+    let notes = await getClientWeeklyNotes(userId, weekKey);
+    
+    // 如果當週完全沒有資料，則撈取各客戶「最新」的歷史紀錄來繼承
+    if (!notes || notes.length === 0) {
+      const latestNotes = await getLatestNotesForAllClients(userId);
+      if (latestNotes.length > 0) {
+        // 將舊紀錄替換 week_key 後回傳（前端可以決定要不要直接存檔，或是等使用者修改後才存）
+        notes = latestNotes.map((n: any) => ({
+          ...n,
+          id: undefined, // 不帶 id，避免前端以為是既有資料
+          week_key: weekKey,
+        }));
+      }
+    }
+    
+    return c.json({ notes });
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.put('/api/client-notes', async (c) => {
+  const userId = c.get('userId');
+  const body = await c.req.json();
+  
+  if (!body.client_name || !body.week_key) {
+    return c.json({ error: 'client_name and week_key are required' }, 400);
+  }
+
+  try {
+    await upsertClientWeeklyNote(userId, body);
+    return c.json({ ok: true });
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.put('/api/client-notes/batch', async (c) => {
+  const userId = c.get('userId');
+  const body = await c.req.json();
+  
+  if (!body.week_key || !Array.isArray(body.notes)) {
+    return c.json({ error: 'week_key and notes array are required' }, 400);
+  }
+
+  try {
+    for (const note of body.notes) {
+      if (note.client_name) {
+        await upsertClientWeeklyNote(userId, { ...note, week_key: body.week_key });
+      }
+    }
+    return c.json({ ok: true });
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
+});
+
 // Mount V2 Telegram Webhook (includes Fast ACK & Dedup)
 app.route('/', telegramRoute);
 
-app.post('/api/extract', async (c) => {
-  return c.json({
-    error: 'AI 會議紀錄整理已停用。請改用 /api/manual-entry 建立專案紀錄並手動連結日期。'
-  }, 410);
-});
+
 
 app.get('/api/user-settings', async (c) => {
   const userId = c.get('userId');
