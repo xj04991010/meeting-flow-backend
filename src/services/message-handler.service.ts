@@ -91,7 +91,7 @@ function startProgressUpdates(chatId: number, messageId: number, isShort: boolea
 }
 
 export function makeReviewFlag(confidence: number, explicitNeedsReview: unknown, hasRequiredTime = true) {
-  return Boolean(explicitNeedsReview) || confidence < 0.85 || !hasRequiredTime;
+  return Boolean(explicitNeedsReview) || confidence < 0.8 || !hasRequiredTime;
 }
 
 
@@ -133,7 +133,7 @@ Mission:
   1. 📝 Executive Summary (會議總結)
   2. 🗣️ Speaker Notes (發言要點)
   3. ✅ Action Items by Owner (各負責人待辦)
-- CONFIRMATION & REVIEW: ALL extracted tasks and events must be created as review drafts first. Always set "needs_review": true, even when the command is clear. The user confirms drafts from Dashboard before they become active.
+- AUTONOMY POLICY: High-confidence items should be useful immediately. Set "needs_review": false when the action/date/person are clear and confidence is >= 0.8. Set "needs_review": true only when the item is ambiguous, missing required time/date context, has conflicting speakers, or confidence is < 0.8.
 - CONVERSATIONAL FALLBACK: If the user is simply chatting, asking a question, or providing non-actionable input (e.g. "你有幾種功能", "你好"), DO NOT hallucinate tasks or events. Output an empty list for tasks and events. In 'reply_message', provide a brutally direct, logical, and highly objective response. Never use polite padding, marketing rhetoric, or moral persuasion. Only use the summary format when there are actual meeting points or tasks to extract.
 - ANTI-HALLUCINATION: NEVER invent tasks or actions (e.g., "腳本撰寫", "剪輯") for a client if the text does not explicitly mention them for that specific client. If the text says "開會" (meeting), it MUST be an event, not a task, even if the exact time is fuzzy or missing (use a fallback time or leave start_time null). Do not mix context between different clients.
 - STRICT CATEGORIZATION:
@@ -157,7 +157,7 @@ Output JSON only:
       "priority": "high or medium or low",
       "category": "null (leave empty during extraction)",
       "confidence": 0.0,
-      "needs_review": true,
+      "needs_review": false,
       "source_quote": "short quote from the source text"
     }
   ],
@@ -169,7 +169,7 @@ Output JSON only:
       "end_time": "ISO-8601 datetime with timezone or null",
       "location": "location or null",
       "confidence": 0.0,
-      "needs_review": true,
+      "needs_review": false,
       "source_quote": "short quote from the source text"
     }
   ],
@@ -179,7 +179,7 @@ Output JSON only:
 
 Rules:
 - Prefer Traditional Chinese (zh-TW).
-- ALL tasks and events MUST have "needs_review": true.
+- Use needs_review sparingly. The dashboard is for fixing uncertain edge cases, not manually approving every AI result.
 - Never output markdown outside the JSON structure.
 - Never use a single mutually-exclusive type field.`;
 }
@@ -239,6 +239,7 @@ Mission:
 - If the user is just adding something new, output it in "tasks" or "events".
 - Output JSON exactly like the main extraction format, with reply_message, tasks, events, unresolved_notes, and delete_targets.
 - IMPORTANT: Respect the user's exact terminology. If the user writes "發片", DO NOT convert it to "發貨". Maintain the original context.
+- AUTONOMY POLICY: If the correction/addition is clear and confidence is >= 0.8, set "needs_review": false. Use "needs_review": true only for ambiguous items that still need the user to fill missing information.
 
 Output JSON only:
 {
@@ -252,7 +253,7 @@ Output JSON only:
       "priority": "high or medium or low",
       "category": "null (leave empty during extraction)",
       "confidence": 0.0,
-      "needs_review": true,
+      "needs_review": false,
       "source_quote": "short quote from the source text"
     }
   ],
@@ -265,7 +266,7 @@ Rules:
 - Prefer Traditional Chinese.
 - Keep titles concise but operational.
 - Do not behave like a coach.
-- CONFIRMATION & REVIEW: Always set "needs_review": true. The user confirms drafts from Dashboard before they become active.`;
+- REVIEW: Use needs_review only for uncertain items. Clear supplements should become active immediately.`;
 }
 
 export async function extractSupplementData(userId: string, text: string, batchContext: string): Promise<ParserOutput> {
@@ -314,10 +315,17 @@ export async function persistExtraction(userId: string, rawText: string, result:
   const eventCount = await insertEvents(userId, batchId, result.events || []);
   const memoryCount = await insertMemories(userId, batchId, result.memories || []);
   
-  const reviewCount = (result.tasks?.length || 0)
-    + (result.events?.length || 0)
-    + (result.unresolved_notes?.length || 0);
-  const autoReadyEventCount = 0;
+  const reviewTaskCount = (result.tasks || []).filter((task) => {
+    if (!hasMeaningfulText(task.title)) return false;
+    return makeReviewFlag(normalizeConfidence(task.confidence), task.needs_review);
+  }).length;
+  const reviewEventCount = (result.events || []).filter((event) => {
+    if (!hasMeaningfulText(event.title)) return false;
+    return makeReviewFlag(normalizeConfidence(event.confidence), event.needs_review, hasMeaningfulText(event.start_time));
+  }).length;
+  const unresolvedCount = result.unresolved_notes?.filter((note) => hasMeaningfulText(note)).length || 0;
+  const reviewCount = reviewTaskCount + reviewEventCount + unresolvedCount;
+  const autoReadyEventCount = Math.max(0, eventCount - reviewEventCount);
 
   return { batchId, taskCount, eventCount, reviewCount, autoReadyEventCount, taskIds, memoryCount };
 }
@@ -361,10 +369,15 @@ export function buildTelegramSummary(userId: string, result: ParserOutput, summa
     stats += `\n🧠 **助理已自動記住 ${summary.memoryCount} 筆長期記憶/習慣**`;
   }
   lines.push(stats);
-  lines.push('⚠️ **狀態：等待人工二次確認**');
-  lines.push('所有擷取的項目目前皆設為「待審閱」，請點擊下方按鈕前往 Dashboard 進行確認，確認後才會同步至您的 Google 日曆。');
+  if (summary.reviewCount > 0) {
+    lines.push(`⚠️ **需要補充 ${summary.reviewCount} 項不確定資料**`);
+    lines.push('高信心項目已自動進入任務/行程；只有低信心、缺時間或語意衝突的項目會留在 Dashboard 補充。');
+  } else {
+    lines.push('✅ **高信心項目已自動整理完成**');
+    lines.push('目前沒有需要你逐條確認的項目。');
+  }
   lines.push('');
-  lines.push(`🔗 [點此開啟 Dashboard 進行二次確認](${getDashboardUrl(userId)})`);
+  lines.push(`🔗 [點此開啟 Dashboard](${getDashboardUrl(userId)})`);
   return lines.join('\n');
 }
 
@@ -439,7 +452,7 @@ export async function processTelegramUpdate(message: any) {
 
   if (lowerText === '/start') {
     const userId = await getOrCreateUser(chatId);
-    const reply = 'MeetingFlow 已切回會議萃取模式。直接貼上會議紀錄，我會批次抽出待辦、行程與待確認項目。';
+    const reply = 'MeetingFlow 已切到專案管理模式。請打開 Dashboard，用「客戶 / 日期 / 一句紀錄」建立可連結到週曆與月曆的專案紀錄。';
     await sendTelegram(chatId, reply, [[{ text: '打開 Dashboard', url: getDashboardUrl(userId) }]]);
     return;
   }

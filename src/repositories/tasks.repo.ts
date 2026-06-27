@@ -1,6 +1,8 @@
 import { supabase } from '../utils/db';
 import { ExtractedTask } from '../schemas/extraction.schema';
 
+export const AUTO_ACCEPT_CONFIDENCE = 0.8;
+
 export function normalizeConfidence(value: unknown): number {
   const parsed = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(parsed)) return 0.7;
@@ -13,7 +15,7 @@ export function hasMeaningfulText(value: unknown): value is string {
 }
 
 export function makeReviewFlag(confidence: number, explicitNeedsReview: unknown, hasRequiredTime = true) {
-  return Boolean(explicitNeedsReview) || confidence < 0.85 || !hasRequiredTime;
+  return Boolean(explicitNeedsReview) || confidence < AUTO_ACCEPT_CONFIDENCE || !hasRequiredTime;
 }
 
 export async function insertTasks(userId: string, batchId: string | null, tasks: ExtractedTask[]) {
@@ -21,18 +23,19 @@ export async function insertTasks(userId: string, batchId: string | null, tasks:
     .filter((task) => hasMeaningfulText(task.title))
     .map((task) => {
       const confidence = normalizeConfidence(task.confidence);
+      const needsReview = makeReviewFlag(confidence, task.needs_review);
       return {
         user_id: userId,
         title: (task.title || '').trim(),
         category: task.category || '其他',
-        status: 'needs_review',
+        status: needsReview ? 'needs_review' : 'pending',
         deadline: task.deadline || null,
         priority: task.priority || 'medium',
         source_batch_id: batchId,
         client: task.client || null,
         owner: task.owner || null,
         confidence,
-        needs_review: true,
+        needs_review: needsReview,
         source_quote: task.source_quote || null
       };
     });

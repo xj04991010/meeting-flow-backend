@@ -509,50 +509,51 @@ app.patch('/api/calendar-intents/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+app.post('/api/manual-entry', async (c) => {
+  try {
+    const userId = c.get('userId');
+    const body = await c.req.json<Record<string, unknown>>();
+
+    const text = nullableText(body.text);
+    if (!text) return c.json({ error: 'text is required' }, 400);
+
+    const client = nullableText(body.client);
+    const category = nullableText(body.category) || client || '專案紀錄';
+    const linkedDate = nullableDate(body.linked_date);
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert({
+        user_id: userId,
+        title: text,
+        client,
+        category,
+        owner: null,
+        deadline: linkedDate,
+        priority: 'medium',
+        status: 'pending',
+        confidence: 1,
+        needs_review: false,
+        source_quote: text,
+      })
+      .select('*')
+      .single();
+
+    if (error) return c.json({ error: error.message }, 500);
+    return c.json({ ok: true, task: data });
+  } catch (error: any) {
+    console.error('Manual entry API error:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
 // Mount V2 Telegram Webhook (includes Fast ACK & Dedup)
 app.route('/', telegramRoute);
 
 app.post('/api/extract', async (c) => {
-  try {
-    const userId = c.get('userId');
-    const { raw_text } = await c.req.json();
-    if (!raw_text || !userId) return c.json({ error: 'raw_text and userId are required' }, 400);
-
-    const route = await routeIntent(userId, raw_text);
-    if (route.intent === 'delete_item') {
-      return c.json({ error: '偵測到刪除指令。請直接點擊網頁上的「垃圾桶」圖示進行刪除，或透過 Telegram 助理操作。' }, 400);
-    }
-    if (route.intent === 'query_schedule') {
-      return c.json({ error: '偵測到查詢指令。您已經在 Dashboard 上了，可以直接觀看畫面喔！' }, 400);
-    }
-    if (route.intent === 'chit_chat') {
-      return c.json({ error: route.reply_message || '請輸入會議紀錄或待辦事項。閒聊請找 Telegram 助理！' }, 400);
-    }
-    if (['update_tasks', 'eod_journal', 'query_weather'].includes(route.intent)) {
-      return c.json({ error: '此指令僅支援在 Telegram 助理中使用。請直接修改網頁上的項目。' }, 400);
-    }
-
-    let result;
-    let newRawText = raw_text;
-    if (route.intent === 'supplement') {
-      const latestBatch = await getLatestSourceBatch(userId);
-      if (latestBatch && latestBatch.raw_text) {
-        result = await extractSupplementData(userId, raw_text, latestBatch.raw_text);
-        newRawText = latestBatch.raw_text + '\n\n[補充指令]: ' + raw_text;
-      } else {
-        result = await extractMeetingData(userId, raw_text);
-      }
-    } else {
-      result = await extractMeetingData(userId, raw_text);
-    }
-    
-    const summary = await persistExtraction(userId, newRawText, result);
-
-    return c.json({ ok: true, result, summary });
-  } catch (error: any) {
-    console.error('Extraction API error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+  return c.json({
+    error: 'AI 會議紀錄整理已停用。請改用 /api/manual-entry 建立專案紀錄並手動連結日期。'
+  }, 410);
 });
 
 app.get('/api/user-settings', async (c) => {

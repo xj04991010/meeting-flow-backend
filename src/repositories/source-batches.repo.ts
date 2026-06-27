@@ -1,5 +1,6 @@
 import { supabase } from '../utils/db';
 import { PARSER_VERSION } from '../utils/env';
+import { hasMeaningfulText, makeReviewFlag, normalizeConfidence } from './tasks.repo';
 
 export async function createSourceBatch(userId: string, rawText: string): Promise<string | null> {
   const { data, error } = await supabase
@@ -56,7 +57,16 @@ export async function getLatestSourceBatch(userId: string) {
 export async function createSourceBatchV1(userId: string, rawText: string, result: any): Promise<string | null> {
   const taskCount = result.tasks?.length || 0;
   const eventCount = result.events?.length || 0;
-  const reviewCount = taskCount + eventCount + (result.unresolved_notes?.length || 0);
+  const reviewTaskCount = (result.tasks || []).filter((task: any) => (
+    hasMeaningfulText(task.title)
+    && makeReviewFlag(normalizeConfidence(task.confidence), task.needs_review)
+  )).length;
+  const reviewEventCount = (result.events || []).filter((event: any) => (
+    hasMeaningfulText(event.title)
+    && makeReviewFlag(normalizeConfidence(event.confidence), event.needs_review, hasMeaningfulText(event.start_time))
+  )).length;
+  const unresolvedNotes = (result.unresolved_notes || []).filter((note: unknown) => hasMeaningfulText(note));
+  const reviewCount = reviewTaskCount + reviewEventCount + unresolvedNotes.length;
 
   const { data, error } = await supabase
     .from('source_batches')
@@ -70,7 +80,7 @@ export async function createSourceBatchV1(userId: string, rawText: string, resul
         task_count: taskCount,
         event_count: eventCount,
         review_count: reviewCount,
-        unresolved_notes: result.unresolved_notes || []
+        unresolved_notes: unresolvedNotes
       }
     })
     .select('id')

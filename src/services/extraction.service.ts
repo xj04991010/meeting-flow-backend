@@ -8,6 +8,7 @@ import { loadRelevantMemories } from './memory.service';
 import { createDecisionLog } from './decision-logger.service';
 import { loadPlaybookRules, buildPlaybookPrompt } from './playbook.service';
 import { calculateRiskScore, detectPrepGap } from './strategy.service';
+import { AUTO_ACCEPT_CONFIDENCE } from '../repositories/tasks.repo';
 
 export async function processExtractionJob(userId: string, chatId: number, text: string, batchId: string, voiceFileId?: string | null, thinkingMessageId?: number | null) {
   const reply = async (msg: string, buttons?: any) => { 
@@ -136,11 +137,64 @@ Output strictly valid JSON matching this schema:
       return;
     }
 
-    // 6. Stage Candidates (Preview Mode)
-    const candidatesCount = await insertAiCandidates(userId, batchId, output);
+    // 6. Persist tasks/events immediately. Only uncertain items remain marked for user input.
+    const autoAcceptBatch = output.confidence >= AUTO_ACCEPT_CONFIDENCE;
+    const taskRows = output.tasks.map((task) => {
+      const needsReview = !autoAcceptBatch;
+      return {
+        user_id: userId,
+        source_batch_id: batchId,
+        title: task.title,
+        deadline: task.due_at,
+        priority: task.priority || 'medium',
+        category: task.category || '其他',
+        status: needsReview ? 'needs_review' : 'pending',
+        confidence: output.confidence,
+        needs_review: needsReview,
+        source_quote: task.prep_gap_notes || null
+      };
+    });
+    const eventRows = output.events.map((event) => {
+      const needsReview = !autoAcceptBatch || !event.start_at;
+      return {
+        user_id: userId,
+        source_batch_id: batchId,
+        title: event.title,
+        start_time: event.start_at,
+        end_time: event.end_at,
+        action_type: 'propose_create',
+        status: needsReview ? 'needs_review' : 'ready',
+        sync_status: needsReview ? 'pending_review' : 'ready',
+        confidence: output.confidence,
+        needs_review: needsReview,
+        source_quote: event.prep_gap_notes || null
+      };
+    });
+
+    if (taskRows.length > 0) {
+      const { error } = await supabase.from('tasks').insert(taskRows);
+      if (error) throw new Error(`Failed to insert tasks: ${error.message}`);
+    }
+    if (eventRows.length > 0) {
+      const { error } = await supabase.from('calendar_intents').insert(eventRows);
+      if (error) throw new Error(`Failed to insert events: ${error.message}`);
+    }
+
+    const memoryCandidatesOutput: AiExtractionOutput = {
+      ...output,
+      tasks: [],
+      events: [],
+    };
+    const candidatesCount = await insertAiCandidates(userId, batchId, memoryCandidatesOutput);
     await updateSourceBatchSummary(batchId, output.reasoning_summary, output);
 
-    if (candidatesCount === 0) {
+    const reviewCount = taskRows.filter((task) => task.needs_review).length
+      + eventRows.filter((event) => event.needs_review).length
+      + candidatesCount;
+    const autoTaskCount = taskRows.length - taskRows.filter((task) => task.needs_review).length;
+    const autoEventCount = eventRows.length - eventRows.filter((event) => event.needs_review).length;
+
+    if (taskRows.length + eventRows.length + candidatesCount === 0) {
       await reply(`無任何需處理的任務或記憶。\n\n${output.reasoning_summary}`);
       return;
     }
@@ -151,12 +205,16 @@ Output strictly valid JSON matching this schema:
     }
     const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
 
-    const summaryMsg = `📊 **萃取報告，等待確認**\n\n${output.reasoning_summary}${memoryStr}\n\n已攔截：${output.tasks.length} 任務, ${output.events.length} 行程, ${output.memories.length} 記憶。\n\n⚠️ 狀態：等待您的確認。未經確認不會寫入正式資料庫。\n\n⏱️ 運算耗時：${seconds} 秒`;
+    const statusLine = reviewCount > 0
+      ? `⚠️ 需要補充：${reviewCount} 項低信心/缺資料項目已放進 Dashboard。`
+      : '✅ 高信心項目已自動整理完成，沒有需要逐條確認的項目。';
+
+    const summaryMsg = `📊 **萃取完成**\n\n${output.reasoning_summary}${memoryStr}\n\n已自動整理：${autoTaskCount} 任務, ${autoEventCount} 行程。\n${statusLine}\n\n⏱️ 運算耗時：${seconds} 秒`;
 
     await reply(summaryMsg, [
-      [{ text: '✅ 全部確認並同步', callback_data: `sync_batch_${batchId}` }],
+      ...(autoEventCount > 0 || candidatesCount > 0 ? [[{ text: autoEventCount > 0 ? '✅ 同步已通過行程' : '✅ 確認記憶寫入', callback_data: `sync_batch_${batchId}` }]] : []),
       [{ text: '❌ 辨識錯誤，放棄此筆紀錄', callback_data: `reject_batch_${batchId}` }],
-      [{ text: '🔍 進入儀表板細部修改', url: `https://meeting-flow-backend-1.onrender.com?uid=${userId}&batch=${batchId}` }]
+      [{ text: reviewCount > 0 ? '🔍 打開 Dashboard 補充' : '🔍 打開 Dashboard', url: `https://meeting-flow-backend-1.onrender.com?uid=${userId}&batch=${batchId}` }]
     ]);
 
   } catch (err: any) {
