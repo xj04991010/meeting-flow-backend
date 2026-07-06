@@ -23,4 +23,18 @@ describe('TMA Auth Middleware', () => {
     expect(data.error).toBe('Unauthorized'); 
     expect(data.error).not.toBe('Unauthorized: Missing or invalid TMA token');
   });
+
+  it('should allow dashboard PUT requests through CORS preflight', async () => {
+    const res = await app.request('/api/client-notes', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://127.0.0.1:5173',
+        'Access-Control-Request-Method': 'PUT',
+        'Access-Control-Request-Headers': 'authorization,content-type,x-dashboard-user-id',
+      },
+    });
+
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-methods')).toContain('PUT');
+  });
 });

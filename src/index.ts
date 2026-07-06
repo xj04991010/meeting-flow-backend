@@ -67,7 +67,7 @@ app.use('/api/*', cors({
     if (!origin) return origin;
     return isAllowedOrigin(origin) ? origin : undefined;
   },
-  allowMethods: ['GET', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  allowMethods: ['GET', 'PATCH', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization', 'X-Dashboard-User-Id']
 }));
 

@@ -23,6 +23,7 @@ import { loadRelevantMemories } from './memory.service';
 import { createDecisionLog } from './decision-logger.service';
 import { loadPlaybookRules, buildPlaybookPrompt } from './playbook.service';
 import { calculateRiskScore, detectPrepGap } from './strategy.service';
+import { handleClientSecretaryMessage } from './client-secretary.service';
 export type TelegramButton = {
   text: string;
   url?: string;
@@ -171,6 +172,14 @@ export async function processTelegramUpdate(message: any) {
   console.log(`[DEBUG] processTelegramUpdate called. chatId: ${chatId}, text: ${text}`);
 
   const lowerText = text.toLowerCase();
+  const secretaryUserId = await getOrCreateUser(chatId);
+  try {
+    if (await handleClientSecretaryMessage(chatId, secretaryUserId, text)) {
+      return;
+    }
+  } catch (error) {
+    console.error('[CLIENT_SECRETARY] Failed to process message:', error);
+  }
 
   if (lowerText === '/start') {
     const userId = await getOrCreateUser(chatId);

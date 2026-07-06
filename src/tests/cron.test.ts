@@ -20,6 +20,22 @@ vi.mock('../services/cron-window.service', () => ({
     windowLabel: 'test'
   })
 }));
+vi.mock('../utils/db', () => {
+  const result = { data: [], error: null };
+  let query: any;
+  query = {
+    select: vi.fn(() => query),
+    not: vi.fn(() => query),
+    eq: vi.fn(() => query),
+    then: (resolve: (value: typeof result) => unknown, reject: (reason: unknown) => unknown) =>
+      Promise.resolve(result).then(resolve, reject),
+  };
+  return {
+    supabase: {
+      from: vi.fn(() => query),
+    },
+  };
+});
 
 describe('Cron Endpoints', () => {
   it('should reject morning cron without valid token', async () => {

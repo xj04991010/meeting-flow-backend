@@ -1,8 +1,16 @@
 import { supabase } from '../utils/db';
 
+export type ClientNoteField = 'progress' | 'nextPush' | 'companyHelp';
+
+export type ClientDateLink = {
+  id: string;
+  label: string;
+  date: string;
+  source?: string;
+  field?: ClientNoteField;
+};
+
 export type ClientWeeklyNoteData = {
-  id?: string;
-  user_id?: string;
   client_name: string;
   week_key: string;
   traffic_light?: 'green' | 'yellow' | 'red';
@@ -10,15 +18,49 @@ export type ClientWeeklyNoteData = {
   progress_note?: string;
   next_week_note?: string;
   urgent_note?: string;
-  date_links?: any[];
+  raw_count?: number;
+  edited_count?: number;
+  scheduled_count?: number;
+  unshot_count?: number;
+  date_links?: ClientDateLink[];
 };
 
-export async function upsertClientWeeklyNote(userId: string, data: ClientWeeklyNoteData) {
-  // If id is provided, we update. Otherwise we upsert by unique constraint (user_id, client_name, week_key).
-  const payload = {
-    ...data,
+const OPTIONAL_NOTE_FIELDS = [
+  'traffic_light',
+  'current_status',
+  'progress_note',
+  'next_week_note',
+  'urgent_note',
+  'raw_count',
+  'edited_count',
+  'scheduled_count',
+  'unshot_count',
+  'date_links',
+] as const;
+
+export function buildClientWeeklyNotePayload(userId: string, data: ClientWeeklyNoteData) {
+  const clientName = data.client_name?.trim();
+  const weekKey = data.week_key?.trim();
+  if (!clientName || !weekKey) {
+    throw new Error('client_name and week_key are required');
+  }
+
+  const payload: Record<string, unknown> = {
     user_id: userId,
+    client_name: clientName,
+    week_key: weekKey,
   };
+
+  for (const field of OPTIONAL_NOTE_FIELDS) {
+    const value = data[field];
+    if (value !== undefined) payload[field] = value;
+  }
+
+  return payload;
+}
+
+export async function upsertClientWeeklyNote(userId: string, data: ClientWeeklyNoteData) {
+  const payload = buildClientWeeklyNotePayload(userId, data);
 
   const { data: result, error } = await supabase
     .from('client_weekly_notes')
