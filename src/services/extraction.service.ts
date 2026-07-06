@@ -9,6 +9,7 @@ import { createDecisionLog } from './decision-logger.service';
 import { loadPlaybookRules, buildPlaybookPrompt } from './playbook.service';
 import { calculateRiskScore, detectPrepGap } from './strategy.service';
 import { AUTO_ACCEPT_CONFIDENCE } from '../repositories/tasks.repo';
+import { getDashboardUrl } from '../utils/env';
 
 export async function processExtractionJob(userId: string, chatId: number, text: string, batchId: string, voiceFileId?: string | null, thinkingMessageId?: number | null) {
   const reply = async (msg: string, buttons?: any) => { 
@@ -214,7 +215,7 @@ Output strictly valid JSON matching this schema:
     await reply(summaryMsg, [
       ...(autoEventCount > 0 || candidatesCount > 0 ? [[{ text: autoEventCount > 0 ? '✅ 同步已通過行程' : '✅ 確認記憶寫入', callback_data: `sync_batch_${batchId}` }]] : []),
       [{ text: '❌ 辨識錯誤，放棄此筆紀錄', callback_data: `reject_batch_${batchId}` }],
-      [{ text: reviewCount > 0 ? '🔍 打開 Dashboard 補充' : '🔍 打開 Dashboard', url: `https://meeting-flow-backend-1.onrender.com?uid=${userId}&batch=${batchId}` }]
+      [{ text: reviewCount > 0 ? '🔍 打開 Dashboard 補充' : '🔍 打開 Dashboard', url: getDashboardUrl(userId, { batch: batchId }) }]
     ]);
 
   } catch (err: any) {

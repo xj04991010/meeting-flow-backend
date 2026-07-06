@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
 import { sendTelegram } from './services/telegram.service';
 import { acquireCronLock } from './services/cron-lock.service';
+import { getDashboardUrl } from './utils/env';
 
 dotenv.config();
 
@@ -99,7 +100,7 @@ export function startCronJobs() {
             const template = reminderTemplates[Math.floor(Math.random() * reminderTemplates.length)];
             const message = template(t.title);
             
-            const dashboardUrl = `https://meeting-flow-backend-1.onrender.com?uid=${t.user_id}`;
+            const dashboardUrl = getDashboardUrl(t.user_id);
             const buttons = [
               [{ text: '📅 幫我延到明天', callback_data: `postpone_task_${t.id}` }],
               [{ text: '✅ 我去 Dashboard 看', url: dashboardUrl }]

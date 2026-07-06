@@ -45,7 +45,6 @@ import { supabase } from './utils/db';
 const defaultOrigins = [
   'http://127.0.0.1:5173',
   'http://localhost:5173',
-  'https://meeting-flow-backend-1.onrender.com',
   DASHBOARD_BASE_URL
 ];
 const allowedOrigins = process.env.ALLOWED_ORIGINS
