@@ -38,6 +38,20 @@ describe('TMA Auth Middleware', () => {
     expect(res.headers.get('access-control-allow-methods')).toContain('PUT');
   });
 
+  it('allows the production dashboard origin', async () => {
+    const res = await app.request('/api/client-notes', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://meeting-flow-dashboard.onrender.com',
+        'Access-Control-Request-Method': 'PUT',
+        'Access-Control-Request-Headers': 'authorization,content-type,x-dashboard-user-id',
+      },
+    });
+
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-origin')).toBe('https://meeting-flow-dashboard.onrender.com');
+  });
+
   it('validates client assistant input before calling external services', async () => {
     const res = await app.request('/api/client-assistant', {
       method: 'POST',
