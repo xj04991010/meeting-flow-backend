@@ -3,6 +3,8 @@ import {
   getTaipeiDateKey,
   getTaipeiWeekKey,
   parseClientSecretaryCommand,
+  parseSupplementNote,
+  serializeSupplementNote,
 } from '../services/client-secretary.service';
 
 describe('parseClientSecretaryCommand', () => {
@@ -43,6 +45,44 @@ describe('parseClientSecretaryCommand', () => {
       clientName: '妮妮',
       field: 'progress_note',
       text: '腳本已完成',
+    });
+  });
+
+  it('routes current status and shooting updates to their report sections', () => {
+    expect(parseClientSecretaryCommand('水果王朱哥 目前狀態：可發至 7/9', clients)).toEqual({
+      type: 'append_note',
+      clientName: '水果王朱哥',
+      field: 'current_status',
+      text: '可發至 7/9',
+    });
+    expect(parseClientSecretaryCommand('水果王朱哥 待拍攝：美村店收店', clients)).toEqual({
+      type: 'append_note',
+      clientName: '水果王朱哥',
+      field: 'shooting_note',
+      text: '美村店收店',
+    });
+    expect(parseClientSecretaryCommand('水果王朱哥 待拍攝內容：\n1. 美村店收店\n2. 百香果投放片', clients)).toEqual({
+      type: 'append_note',
+      clientName: '水果王朱哥',
+      field: 'shooting_note',
+      text: '1. 美村店收店\n2. 百香果投放片',
+    });
+  });
+});
+
+describe('supplement note sections', () => {
+  it('keeps shooting content separate from company decisions', () => {
+    const stored = serializeSupplementNote('1. 美村店收店\n2. 百香果投放片', '拍攝日期待公司確認');
+    expect(parseSupplementNote(stored)).toEqual({
+      shootingNote: '1. 美村店收店\n2. 百香果投放片',
+      companyHelp: '拍攝日期待公司確認',
+    });
+  });
+
+  it('treats an unmarked legacy value as company help', () => {
+    expect(parseSupplementNote('客戶回覆變慢')).toEqual({
+      shootingNote: '',
+      companyHelp: '客戶回覆變慢',
     });
   });
 });

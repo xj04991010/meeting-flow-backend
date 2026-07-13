@@ -2,6 +2,7 @@ import { supabase } from '../../utils/db';
 import { getLatestNotesForAllClients } from '../../repositories/client-weekly-notes.repo';
 import { sendThinkingMessage, editTelegramMessage } from '../telegram.service';
 import { callLLM } from '../llm.service';
+import { parseSupplementNote } from '../client-secretary.service';
 
 type ClientFollowup = {
   client: string;
@@ -37,7 +38,8 @@ export function collectClientFollowups(
     }
 
     if (light === 'red' || light === 'yellow') {
-      const urgent = String(note.urgent_note || note.next_week_note || '').trim();
+      const supplement = parseSupplementNote(note.urgent_note);
+      const urgent = String(supplement.companyHelp || note.next_week_note || supplement.shootingNote || '').trim();
       if (urgent && !followups.some((item) => item.client === client && item.item === urgent)) {
         followups.push({ client, light, item: urgent });
       }

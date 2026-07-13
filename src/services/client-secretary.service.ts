@@ -10,7 +10,10 @@ import {
 import { getDashboardUrl } from '../utils/env';
 import { sendTelegram } from './telegram.service';
 
-type NoteField = 'progress_note' | 'next_week_note' | 'urgent_note';
+type NoteField = 'current_status' | 'progress_note' | 'next_week_note' | 'shooting_note' | 'urgent_note';
+
+const SHOOTING_SECTION = '【待拍攝內容】';
+const COMPANY_HELP_SECTION = '【需公司判斷／緊急協辦】';
 
 export type ClientSecretaryCommand =
   | { type: 'summary'; range: 'today' | 'week' }
@@ -26,7 +29,46 @@ const LIGHT_MAP = {
 } as const;
 
 function normalizeCommandText(value: string) {
-  return value.trim().replace(/\s+/g, ' ');
+  return value
+    .trim()
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\t ]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n');
+}
+
+export function parseSupplementNote(value?: string | null) {
+  const normalized = String(value || '').trim();
+  if (!normalized.includes(SHOOTING_SECTION) && !normalized.includes(COMPANY_HELP_SECTION)) {
+    return { shootingNote: '', companyHelp: normalized };
+  }
+
+  const shootingStart = normalized.indexOf(SHOOTING_SECTION);
+  const companyStart = normalized.indexOf(COMPANY_HELP_SECTION);
+  return {
+    shootingNote: shootingStart >= 0
+      ? normalized.slice(
+        shootingStart + SHOOTING_SECTION.length,
+        companyStart > shootingStart ? companyStart : undefined,
+      ).trim()
+      : '',
+    companyHelp: companyStart >= 0
+      ? normalized.slice(
+        companyStart + COMPANY_HELP_SECTION.length,
+        shootingStart > companyStart ? shootingStart : undefined,
+      ).trim()
+      : '',
+  };
+}
+
+export function serializeSupplementNote(shootingNote: string, companyHelp: string) {
+  return [
+    shootingNote.trim() ? `${SHOOTING_SECTION}\n${shootingNote.trim()}` : '',
+    companyHelp.trim() ? `${COMPANY_HELP_SECTION}\n${companyHelp.trim()}` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
+function appendLine(current: string, value: string) {
+  return current.trim() ? `${current.trim()}\n${value.trim()}` : value.trim();
 }
 
 export function getTaipeiDateKey(date = new Date()) {
@@ -83,8 +125,10 @@ export function parseClientSecretaryCommand(
   }
 
   const fieldPrefixes: Array<{ pattern: RegExp; field: NoteField }> = [
+    { pattern: /^(?:目前狀態|現在狀態|狀態更新)\s*[:：]?\s*/i, field: 'current_status' },
     { pattern: /^(?:本週|本周|本週進度|本周進度)\s*[:：]?\s*/i, field: 'progress_note' },
     { pattern: /^(?:下週|下周|下週進度|下周進度|下週推進|下周推進)\s*[:：]?\s*/i, field: 'next_week_note' },
+    { pattern: /^(?:待拍攝內容|待拍攝|拍攝清單)\s*[:：]?\s*/i, field: 'shooting_note' },
     { pattern: /^(?:緊急|緊急事項|協辦|公司協助|需公司協助)\s*[:：]?\s*/i, field: 'urgent_note' },
   ];
 
@@ -152,9 +196,10 @@ async function sendSummary(chatId: number, userId: string, range: 'today' | 'wee
 
     if (range === 'today') {
       if (!dueToday.length && note.traffic_light === 'green') continue;
+      const supplement = parseSupplementNote(note.urgent_note);
       const dueText = dueToday.length
         ? dueToday.map((link) => link.label).join('、')
-        : note.urgent_note || '需持續追蹤';
+        : supplement.companyHelp || supplement.shootingNote || '需持續追蹤';
       lines.push(`【${client.name}】${lightLabel(note.traffic_light)}：${dueText}`);
       continue;
     }
@@ -206,13 +251,16 @@ export async function handleClientSecretaryMessage(
       await sendTelegram(chatId, `【${command.clientName}】目前沒有週進度紀錄。`);
       return true;
     }
+    const supplement = parseSupplementNote(currentNote.urgent_note);
     const counts = `毛片 ${currentNote.raw_count || 0}｜成片 ${currentNote.edited_count || 0}｜已排程 ${currentNote.scheduled_count || 0}｜本月未拍 ${currentNote.unshot_count || 0}`;
     await sendTelegram(
       chatId,
       `【${command.clientName}】${lightLabel(currentNote.traffic_light)}\n`
+      + `目前狀態：${currentNote.current_status || '尚未更新'}\n`
       + `本週：${currentNote.progress_note || '尚未更新'}\n`
       + `下週：${currentNote.next_week_note || '尚未更新'}\n`
-      + `協辦：${currentNote.urgent_note || '無'}\n`
+      + `待拍攝：${supplement.shootingNote || '無'}\n`
+      + `協辦：${supplement.companyHelp || '無'}\n`
       + counts,
     );
     return true;
@@ -222,25 +270,47 @@ export async function handleClientSecretaryMessage(
   if (command.type === 'set_light') {
     nextNote.traffic_light = command.light;
     if (command.reason) {
-      const field = command.light === 'green' ? 'progress_note' : 'urgent_note';
-      nextNote[field] = nextNote[field]
-        ? `${nextNote[field]}\n${command.reason}`
-        : command.reason;
+      if (command.light === 'green') {
+        nextNote.progress_note = appendLine(nextNote.progress_note || '', command.reason);
+      } else {
+        const supplement = parseSupplementNote(nextNote.urgent_note);
+        nextNote.urgent_note = serializeSupplementNote(
+          supplement.shootingNote,
+          appendLine(supplement.companyHelp, command.reason),
+        );
+      }
     }
     await upsertClientWeeklyNote(userId, nextNote);
     await sendTelegram(chatId, `已將【${command.clientName}】改為${lightLabel(command.light)}${command.reason ? '，並記下原因。' : '。'}`);
     return true;
   }
 
-  nextNote[command.field] = nextNote[command.field]
-    ? `${nextNote[command.field]}\n${command.text}`
-    : command.text;
+  if (command.field === 'current_status') {
+    nextNote.current_status = command.text;
+  } else if (command.field === 'shooting_note') {
+    const supplement = parseSupplementNote(nextNote.urgent_note);
+    nextNote.urgent_note = serializeSupplementNote(
+      appendLine(supplement.shootingNote, command.text),
+      supplement.companyHelp,
+    );
+  } else if (command.field === 'urgent_note') {
+    const supplement = parseSupplementNote(nextNote.urgent_note);
+    nextNote.urgent_note = serializeSupplementNote(
+      supplement.shootingNote,
+      appendLine(supplement.companyHelp, command.text),
+    );
+  } else {
+    nextNote[command.field] = appendLine(nextNote[command.field] || '', command.text);
+  }
   await upsertClientWeeklyNote(userId, nextNote);
-  const fieldLabel = command.field === 'progress_note'
-    ? '本週進度'
-    : command.field === 'next_week_note'
-      ? '下週進度'
-      : '緊急事項或協辦';
+  const fieldLabels: Record<NoteField, string> = {
+    current_status: '目前狀態',
+    progress_note: '本週進度',
+    next_week_note: '下週推進',
+    shooting_note: '待拍攝內容',
+    urgent_note: '需公司判斷或協辦',
+  };
+  const fieldLabel = fieldLabels[command.field];
   await sendTelegram(chatId, `已加入【${command.clientName}】的${fieldLabel}。`);
   return true;
 }

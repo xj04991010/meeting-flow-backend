@@ -1,6 +1,6 @@
 import { supabase } from '../utils/db';
 
-export type ClientNoteField = 'progress' | 'nextPush' | 'companyHelp';
+export type ClientNoteField = 'currentStatus' | 'progress' | 'nextPush' | 'shootingNote' | 'companyHelp';
 
 export type ClientDateLink = {
   id: string;
@@ -8,6 +8,7 @@ export type ClientDateLink = {
   date: string;
   source?: string;
   field?: ClientNoteField;
+  start?: number;
 };
 
 export type ClientCalendarDateLink = ClientDateLink & {
@@ -168,9 +169,14 @@ export function collectClientDateLinksForMonth(
         label: String(link.label || '未命名日期'),
         date: String(link.date),
         source: typeof link.source === 'string' ? link.source : undefined,
-        field: link.field === 'progress' || link.field === 'nextPush' || link.field === 'companyHelp'
+        field: link.field === 'currentStatus'
+          || link.field === 'progress'
+          || link.field === 'nextPush'
+          || link.field === 'shootingNote'
+          || link.field === 'companyHelp'
           ? link.field
           : undefined,
+        start: typeof link.start === 'number' ? link.start : undefined,
         client_name: clientName,
       });
     }

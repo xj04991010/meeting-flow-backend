@@ -4,7 +4,7 @@ import {
   getLatestNotesForAllClients,
 } from '../repositories/client-weekly-notes.repo';
 import { supabase } from '../utils/db';
-import { getTaipeiWeekKey } from './client-secretary.service';
+import { getTaipeiWeekKey, parseSupplementNote } from './client-secretary.service';
 import { callLLM } from './llm.service';
 
 type AssistantContext = {
@@ -82,19 +82,24 @@ export async function answerClientAssistant(
       contract_end: client.contract_end,
       default_monthly_target: client.default_monthly_target,
     })),
-    notes: notes.map((note) => ({
-      client_name: note.client_name,
-      week_key: note.week_key,
-      traffic_light: note.traffic_light,
-      raw_count: note.raw_count,
-      edited_count: note.edited_count,
-      scheduled_count: note.scheduled_count,
-      unshot_count: note.unshot_count,
-      progress_note: note.progress_note,
-      next_week_note: note.next_week_note,
-      urgent_note: note.urgent_note,
-      date_links: note.date_links,
-    })),
+    notes: notes.map((note) => {
+      const supplement = parseSupplementNote(note.urgent_note);
+      return {
+        client_name: note.client_name,
+        week_key: note.week_key,
+        traffic_light: note.traffic_light,
+        raw_count: note.raw_count,
+        edited_count: note.edited_count,
+        scheduled_count: note.scheduled_count,
+        unshot_count: note.unshot_count,
+        current_status: note.current_status,
+        progress_note: note.progress_note,
+        next_week_note: note.next_week_note,
+        shooting_note: supplement.shootingNote,
+        company_help: supplement.companyHelp,
+        date_links: note.date_links,
+      };
+    }),
     tasks: tasksResult.data || [],
     events: eventsResult.data || [],
   };

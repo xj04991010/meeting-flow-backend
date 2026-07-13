@@ -7,7 +7,8 @@ describe('collectClientDateLinksForMonth', () => {
       {
         client_name: '水果王',
         date_links: [
-          { id: 'a', label: '收款', date: '2026-07-21', field: 'progress' },
+          { id: 'a', label: '可發至 7/9', date: '2026-07-21', field: 'currentStatus', start: 3 },
+          { id: 'shoot', label: '美村店收店', date: '2026-07-25', field: 'shootingNote' },
           { id: 'b', label: '拍片', date: '2026-08-02', field: 'nextPush' },
         ],
       },
@@ -16,9 +17,17 @@ describe('collectClientDateLinksForMonth', () => {
     expect(links).toEqual([
       {
         id: 'a',
-        label: '收款',
+        label: '可發至 7/9',
         date: '2026-07-21',
-        field: 'progress',
+        field: 'currentStatus',
+        start: 3,
+        client_name: '水果王',
+      },
+      {
+        id: 'shoot',
+        label: '美村店收店',
+        date: '2026-07-25',
+        field: 'shootingNote',
         client_name: '水果王',
       },
     ]);
