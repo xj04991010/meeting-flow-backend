@@ -10,6 +10,10 @@ export type ClientDateLink = {
   field?: ClientNoteField;
 };
 
+export type ClientCalendarDateLink = ClientDateLink & {
+  client_name: string;
+};
+
 export type ClientWeeklyNoteData = {
   client_name: string;
   week_key: string;
@@ -89,6 +93,25 @@ export async function getClientWeeklyNotes(userId: string, weekKey: string) {
   return data;
 }
 
+export async function getClientWeeklyNoteWeeks(userId: string, limit = 24) {
+  const { data, error } = await supabase
+    .from('client_weekly_notes')
+    .select('week_key')
+    .eq('user_id', userId)
+    .order('week_key', { ascending: false })
+    .limit(500);
+
+  if (error) {
+    console.error('Error fetching client weekly note weeks:', error);
+    throw error;
+  }
+
+  const weeks = (data || [])
+    .map((row) => row.week_key)
+    .filter((value): value is string => typeof value === 'string');
+  return [...new Set(weeks)].slice(0, limit);
+}
+
 export async function getClientLatestNote(userId: string, clientName: string) {
   const { data, error } = await supabase
     .from('client_weekly_notes')
@@ -128,4 +151,34 @@ export async function getLatestNotesForAllClients(userId: string) {
     }
   }
   return Array.from(latestNotes.values());
+}
+
+export function collectClientDateLinksForMonth(
+  notes: Array<Record<string, any>>,
+  month: string,
+): ClientCalendarDateLink[] {
+  const result: ClientCalendarDateLink[] = [];
+  for (const note of notes) {
+    const clientName = String(note.client_name || '未分類客戶');
+    const links = Array.isArray(note.date_links) ? note.date_links : [];
+    for (const link of links) {
+      if (!link?.date || !String(link.date).startsWith(`${month}-`)) continue;
+      result.push({
+        id: String(link.id || `${clientName}-${link.date}-${result.length}`),
+        label: String(link.label || '未命名日期'),
+        date: String(link.date),
+        source: typeof link.source === 'string' ? link.source : undefined,
+        field: link.field === 'progress' || link.field === 'nextPush' || link.field === 'companyHelp'
+          ? link.field
+          : undefined,
+        client_name: clientName,
+      });
+    }
+  }
+  return result.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export async function getClientDateLinksForMonth(userId: string, month: string) {
+  const notes = await getLatestNotesForAllClients(userId);
+  return collectClientDateLinksForMonth(notes, month);
 }

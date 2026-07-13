@@ -176,8 +176,9 @@ import {
   nullableDate, 
   booleanOrUndefined
 } from './services/message-handler.service';
-import { getClientWeeklyNotes, upsertClientWeeklyNote, getLatestNotesForAllClients } from './repositories/client-weekly-notes.repo';
+import { getClientDateLinksForMonth, getClientWeeklyNoteWeeks, getClientWeeklyNotes, upsertClientWeeklyNote, getLatestNotesForAllClients } from './repositories/client-weekly-notes.repo';
 import { getClients, createClient as repoCreateClient, updateClient } from './repositories/clients.repo';
+import { answerClientAssistant } from './services/client-assistant.service';
 
 
 app.get('/', (c) => {
@@ -587,13 +588,14 @@ app.patch('/api/clients/:id', async (c) => {
 app.get('/api/client-notes', async (c) => {
   const userId = c.get('userId');
   const weekKey = c.req.query('week_key');
+  const inherit = c.req.query('inherit') !== 'false';
   if (!weekKey) return c.json({ error: 'week_key is required' }, 400);
 
   try {
     let notes = await getClientWeeklyNotes(userId, weekKey);
     
     // 如果當週完全沒有資料，則撈取各客戶「最新」的歷史紀錄來繼承
-    if (!notes || notes.length === 0) {
+    if (inherit && (!notes || notes.length === 0)) {
       const latestNotes = await getLatestNotesForAllClients(userId);
       if (latestNotes.length > 0) {
         // 將舊紀錄替換 week_key 後回傳（前端可以決定要不要直接存檔，或是等使用者修改後才存）
@@ -606,6 +608,30 @@ app.get('/api/client-notes', async (c) => {
     }
     
     return c.json({ notes });
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.get('/api/client-note-weeks', async (c) => {
+  const userId = c.get('userId');
+  try {
+    const weeks = await getClientWeeklyNoteWeeks(userId);
+    return c.json({ weeks });
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.get('/api/client-date-links', async (c) => {
+  const userId = c.get('userId');
+  const month = c.req.query('month');
+  if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+    return c.json({ error: 'month must use YYYY-MM format' }, 400);
+  }
+  try {
+    const links = await getClientDateLinksForMonth(userId, month);
+    return c.json({ links });
   } catch (error: any) {
     return c.json({ error: error.message }, 500);
   }
@@ -644,6 +670,28 @@ app.put('/api/client-notes/batch', async (c) => {
     return c.json({ ok: true });
   } catch (error: any) {
     return c.json({ error: error.message }, 500);
+  }
+});
+
+const ClientAssistantRequestSchema = z.object({
+  message: z.string().trim().min(1).max(2000),
+  week_key: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+app.post('/api/client-assistant', async (c) => {
+  const userId = c.get('userId');
+  const parsed = ClientAssistantRequestSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: 'message is required and must be under 2000 characters' }, 400);
+  }
+
+  try {
+    const answer = await answerClientAssistant(userId, parsed.data.message, parsed.data.week_key);
+    if (!answer) return c.json({ error: 'AI assistant is temporarily unavailable' }, 503);
+    return c.json({ answer });
+  } catch (error: any) {
+    console.error('Client assistant error:', error);
+    return c.json({ error: 'AI assistant failed' }, 500);
   }
 });
 

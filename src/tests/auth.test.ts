@@ -37,4 +37,19 @@ describe('TMA Auth Middleware', () => {
     expect(res.status).toBe(204);
     expect(res.headers.get('access-control-allow-methods')).toContain('PUT');
   });
+
+  it('validates client assistant input before calling external services', async () => {
+    const res = await app.request('/api/client-assistant', {
+      method: 'POST',
+      headers: {
+        Authorization: 'tma 6578915a-d33e-4eed-8d22-a3e334480f56',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message: '' }),
+    });
+
+    expect(res.status).toBe(400);
+    const data = await res.json() as { error: string };
+    expect(data.error).toContain('message is required');
+  });
 });
