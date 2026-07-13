@@ -48,9 +48,10 @@ const defaultOrigins = [
   'https://meeting-flow-dashboard.onrender.com',
   DASHBOARD_BASE_URL
 ];
-const allowedOrigins = process.env.ALLOWED_ORIGINS
+const configuredOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
-  : defaultOrigins;
+  : [];
+const allowedOrigins = [...new Set([...defaultOrigins, ...configuredOrigins])];
 const privateNetworkOrigin = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\]|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(?::\d{1,5})?$/;
 
 function isAllowedOrigin(origin: string) {

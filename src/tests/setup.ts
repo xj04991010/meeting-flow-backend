@@ -5,6 +5,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
 process.env.TELEGRAM_BOT_TOKEN = 'test-telegram-token';
 process.env.GROQ_API_KEY = 'test-groq-key';
 process.env.CRON_SECRET = 'test-secret';
+process.env.ALLOWED_ORIGINS = 'https://custom-dashboard.example.com';
 
 beforeAll(() => {
   // Mock console to keep test output clean
